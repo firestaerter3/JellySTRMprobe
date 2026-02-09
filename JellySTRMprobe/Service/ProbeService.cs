@@ -1,10 +1,14 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Entities.Movies;
+using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Providers;
+using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.IO;
 using Microsoft.Extensions.Logging;
 
@@ -19,6 +23,9 @@ public class ProbeService : IProbeService
     private readonly ILibraryManager _libraryManager;
     private readonly IFileSystem _fileSystem;
     private readonly ILogger<ProbeService> _logger;
+
+    private IMetadataProvider? _probeProvider;
+    private bool _probeProviderResolved;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ProbeService"/> class.
@@ -174,14 +181,24 @@ public class ProbeService : IProbeService
             {
                 EnableRemoteContentProbe = true,
                 MetadataRefreshMode = MetadataRefreshMode.FullRefresh,
-                ImageRefreshMode = MetadataRefreshMode.ValidationOnly,
-                ReplaceAllMetadata = false,
-                ReplaceAllImages = false,
             };
+
+            // Try direct probe first — calls ProbeProvider.FetchAsync directly,
+            // bypassing remote metadata providers (TMDb, etc.) for ~3x faster probing.
+            if (await TryDirectProbeAsync(item, refreshOptions, timeoutCts.Token).ConfigureAwait(false))
+            {
+                _logger.LogDebug("Successfully probed {ItemName} ({ItemId}) via direct probe", item.Name, item.Id);
+                return true;
+            }
+
+            // Fallback: use the full refresh pipeline (includes TMDb re-fetch).
+            refreshOptions.ImageRefreshMode = MetadataRefreshMode.ValidationOnly;
+            refreshOptions.ReplaceAllMetadata = false;
+            refreshOptions.ReplaceAllImages = false;
 
             await _providerManager.RefreshSingleItem(item, refreshOptions, timeoutCts.Token).ConfigureAwait(false);
 
-            _logger.LogDebug("Successfully probed {ItemName} ({ItemId})", item.Name, item.Id);
+            _logger.LogDebug("Successfully probed {ItemName} ({ItemId}) via full refresh fallback", item.Name, item.Id);
             return true;
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
@@ -198,5 +215,77 @@ public class ProbeService : IProbeService
             _logger.LogWarning(ex, "Probe failed for {ItemName} ({ItemId})", item.Name, item.Id);
             return false;
         }
+    }
+
+    private async Task<bool> TryDirectProbeAsync(
+        BaseItem item,
+        MetadataRefreshOptions options,
+        CancellationToken cancellationToken)
+    {
+        var provider = ResolveProbeProvider(item);
+        if (provider == null)
+        {
+            return false;
+        }
+
+        ItemUpdateType updateType;
+
+        // Check specific types first (Movie/Episode extend Video).
+        if (item is Movie movie && provider is ICustomMetadataProvider<Movie> movieProvider)
+        {
+            updateType = await movieProvider.FetchAsync(movie, options, cancellationToken).ConfigureAwait(false);
+        }
+        else if (item is Episode episode && provider is ICustomMetadataProvider<Episode> episodeProvider)
+        {
+            updateType = await episodeProvider.FetchAsync(episode, options, cancellationToken).ConfigureAwait(false);
+        }
+        else if (item is Video video && provider is ICustomMetadataProvider<Video> videoProvider)
+        {
+            updateType = await videoProvider.FetchAsync(video, options, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            _logger.LogDebug("Direct probe not supported for item type {Type}, falling back", item.GetType().Name);
+            return false;
+        }
+
+        if (updateType > ItemUpdateType.None)
+        {
+            await item.UpdateToRepositoryAsync(updateType, cancellationToken).ConfigureAwait(false);
+        }
+
+        return true;
+    }
+
+    private IMetadataProvider? ResolveProbeProvider(BaseItem item)
+    {
+        if (!_probeProviderResolved)
+        {
+            // Resolve ProbeProvider via IProviderManager.GetMetadataProviders<T>().
+            // This returns all configured providers for the item's type, including ProbeProvider.
+            var libraryOptions = _libraryManager.GetLibraryOptions(item);
+
+            IEnumerable<IMetadataProvider> providers = item switch
+            {
+                Movie => _providerManager.GetMetadataProviders<Movie>(item, libraryOptions),
+                Episode => _providerManager.GetMetadataProviders<Episode>(item, libraryOptions),
+                _ => _providerManager.GetMetadataProviders<Video>(item, libraryOptions),
+            };
+
+            _probeProvider = providers
+                .FirstOrDefault(p => p.GetType().Name.Contains("Probe", StringComparison.OrdinalIgnoreCase));
+            _probeProviderResolved = true;
+
+            if (_probeProvider != null)
+            {
+                _logger.LogInformation("Resolved direct probe provider: {Name}", _probeProvider.GetType().FullName);
+            }
+            else
+            {
+                _logger.LogWarning("Could not resolve probe provider — falling back to full refresh pipeline");
+            }
+        }
+
+        return _probeProvider;
     }
 }
