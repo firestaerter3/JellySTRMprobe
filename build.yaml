@@ -1,6 +1,6 @@
 name: "JellySTRMprobe"
 guid: "b8f5e3a1-d4c7-4f2e-9a6b-1c8d3e5f7a9b"
-version: "1.1.0.0"
+version: "1.1.1.0"
 targetAbi: "10.11.0.0"
 framework: "net9.0"
 owner: "firestaerter3"

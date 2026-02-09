@@ -52,8 +52,8 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
     {
         return new[]
         {
-            CreateStatic("config.html"),
-            CreateStatic("config.js"),
+            CreateStatic("strmprobe.html"),
+            CreateStatic("strmprobe.js"),
         };
     }
 }
