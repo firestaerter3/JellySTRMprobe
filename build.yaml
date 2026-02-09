@@ -1,0 +1,29 @@
+name: "JellySTRMprobe"
+guid: "b8f5e3a1-d4c7-4f2e-9a6b-1c8d3e5f7a9b"
+version: "1.0.0.0"
+targetAbi: "10.11.0.0"
+framework: "net9.0"
+owner: "firestaerter3"
+overview: "Probe STRM files to extract media info (codec, resolution, duration, audio)"
+description: |
+  JellySTRMprobe extracts media information from STRM file targets by probing
+  remote streams. Jellyfin never probes STRM files during library scans — this
+  plugin fills that gap.
+
+  Features:
+  - Scheduled task to probe all unprobed STRM items
+  - Catch-up mode to auto-probe new STRM items as they are added
+  - Configurable parallelism, timeout, and cooldown
+  - Per-library selection for targeted probing
+
+  This plugin is designed to work alongside Xtream Library or any other STRM
+  file generator.
+category: "General"
+artifacts:
+  - "JellySTRMprobe.dll"
+changelog: |
+  ## v1.0.0.0
+  - Initial release
+  - Scheduled task for bulk STRM probing
+  - Catch-up mode for new items
+  - Configuration UI with library selection

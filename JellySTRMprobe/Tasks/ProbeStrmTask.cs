@@ -1,0 +1,101 @@
+using System;
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
+using JellySTRMprobe.Service;
+using MediaBrowser.Model.Tasks;
+using Microsoft.Extensions.Logging;
+
+namespace JellySTRMprobe.Tasks;
+
+/// <summary>
+/// Scheduled task that probes unprobed STRM items to extract media information.
+/// </summary>
+public class ProbeStrmTask : IScheduledTask, IConfigurableScheduledTask
+{
+    private readonly IProbeService _probeService;
+    private readonly ILogger<ProbeStrmTask> _logger;
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="ProbeStrmTask"/> class.
+    /// </summary>
+    /// <param name="probeService">Instance of the <see cref="IProbeService"/>.</param>
+    /// <param name="logger">Instance of the <see cref="ILogger{ProbeStrmTask}"/>.</param>
+    public ProbeStrmTask(IProbeService probeService, ILogger<ProbeStrmTask> logger)
+    {
+        _probeService = probeService;
+        _logger = logger;
+    }
+
+    /// <inheritdoc />
+    public string Name => "Probe STRM Media Info";
+
+    /// <inheritdoc />
+    public string Key => "StrmProbeMediaInfo";
+
+    /// <inheritdoc />
+    public string Description => "Probes STRM file targets to extract media information (codec, resolution, duration, audio).";
+
+    /// <inheritdoc />
+    public string Category => "STRM Probe";
+
+    /// <inheritdoc />
+    public bool IsHidden => false;
+
+    /// <inheritdoc />
+    public bool IsEnabled => true;
+
+    /// <inheritdoc />
+    public bool IsLogged => true;
+
+    /// <inheritdoc />
+    public IEnumerable<TaskTriggerInfo> GetDefaultTriggers()
+    {
+        return new[]
+        {
+            new TaskTriggerInfo
+            {
+                Type = TaskTriggerInfoType.DailyTrigger,
+                TimeOfDayTicks = TimeSpan.FromHours(4).Ticks,
+            },
+        };
+    }
+
+    /// <inheritdoc />
+    public async Task ExecuteAsync(IProgress<double> progress, CancellationToken cancellationToken)
+    {
+        var config = Plugin.Instance.Configuration;
+        config.Validate();
+
+        _logger.LogInformation("Starting STRM probe task");
+
+        var items = _probeService.GetUnprobedItems(config.SelectedLibraryIds);
+
+        if (items.Count == 0)
+        {
+            _logger.LogInformation("No unprobed STRM items found");
+            progress.Report(100);
+            return;
+        }
+
+        _logger.LogInformation(
+            "Probing {Count} items with parallelism={Parallelism}, timeout={Timeout}s, cooldown={Cooldown}ms",
+            items.Count,
+            config.ProbeParallelism,
+            config.ProbeTimeoutSeconds,
+            config.ProbeCooldownMs);
+
+        var (probed, failed) = await _probeService.ProbeBatchAsync(
+            items,
+            config.ProbeParallelism,
+            config.ProbeTimeoutSeconds,
+            config.ProbeCooldownMs,
+            progress,
+            cancellationToken).ConfigureAwait(false);
+
+        _logger.LogInformation(
+            "STRM probe task finished: {Probed} probed, {Failed} failed",
+            probed,
+            failed);
+    }
+}

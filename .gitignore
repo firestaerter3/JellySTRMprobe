@@ -1,0 +1,22 @@
+# IDE
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+
+# Build
+bin/
+obj/
+publish/
+
+# NuGet
+*.nupkg
+packages/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude local context (contains credentials)
+*.local.md

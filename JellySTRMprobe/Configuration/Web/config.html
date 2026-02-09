@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>JellySTRMprobe</title>
+</head>
+<body>
+    <div id="JellySTRMprobeConfigPage" data-role="page" class="page type-interior pluginConfigurationPage"
+         data-require="emby-input,emby-button,emby-checkbox">
+        <div data-role="content">
+            <div class="content-primary">
+                <form id="JellySTRMprobeConfigForm">
+                    <div class="verticalSection">
+                        <h2 class="sectionTitle">STRM Probe Settings</h2>
+                        <p class="fieldDescription">
+                            Probe STRM file targets to extract media information (codec, resolution, duration, audio).
+                        </p>
+                    </div>
+
+                    <div class="verticalSection">
+                        <h3 class="sectionTitle">Catch-up Mode</h3>
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label class="emby-checkbox-label">
+                                <input is="emby-checkbox" type="checkbox" id="chkEnableCatchUpMode" />
+                                <span>Enable catch-up mode</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">
+                                Automatically probe new STRM items when they are added during library scans.
+                                Items are debounced (30 seconds) to batch-probe efficiently.
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="verticalSection">
+                        <h3 class="sectionTitle">Probe Settings</h3>
+
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="txtProbeParallelism">
+                                Parallelism (1-20)
+                            </label>
+                            <input is="emby-input" type="number" id="txtProbeParallelism"
+                                   min="1" max="20" step="1" />
+                            <div class="fieldDescription">
+                                Number of concurrent probe operations. Higher values speed up probing
+                                but increase load on upstream servers.
+                            </div>
+                        </div>
+
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="txtProbeTimeoutSeconds">
+                                Timeout per item (10-300 seconds)
+                            </label>
+                            <input is="emby-input" type="number" id="txtProbeTimeoutSeconds"
+                                   min="10" max="300" step="1" />
+                            <div class="fieldDescription">
+                                Maximum time to wait for ffprobe to complete on a single item.
+                            </div>
+                        </div>
+
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="txtProbeCooldownMs">
+                                Cooldown between probes (0-5000 ms)
+                            </label>
+                            <input is="emby-input" type="number" id="txtProbeCooldownMs"
+                                   min="0" max="5000" step="50" />
+                            <div class="fieldDescription">
+                                Delay between probe operations to prevent connection exhaustion on upstream servers.
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="verticalSection">
+                        <h3 class="sectionTitle">Library Selection</h3>
+                        <p class="fieldDescription">
+                            Select which libraries to probe. Leave all unchecked to probe all libraries.
+                        </p>
+                        <div id="libraryList"></div>
+                    </div>
+
+                    <div>
+                        <button is="emby-button" type="submit" class="raised button-submit block">
+                            <span>Save</span>
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+        <script type="text/javascript" src="configurationpage?name=config.js"></script>
+    </div>
+</body>
+</html>
