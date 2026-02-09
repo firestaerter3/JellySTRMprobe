@@ -31,7 +31,7 @@ public class PluginTests
         var pages = Plugin.Instance.GetPages().ToList();
 
         pages.Should().HaveCount(2);
-        pages.Should().Contain(p => p.Name == "config.html");
-        pages.Should().Contain(p => p.Name == "config.js");
+        pages.Should().Contain(p => p.Name == "strmprobe.html");
+        pages.Should().Contain(p => p.Name == "strmprobe.js");
     }
 }
