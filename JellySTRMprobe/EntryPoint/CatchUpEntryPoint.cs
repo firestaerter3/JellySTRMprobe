@@ -138,13 +138,19 @@ public class CatchUpEntryPoint : IHostedService, IDisposable
         var progress = new Progress<double>();
         var token = _stoppingCts?.Token ?? CancellationToken.None;
 
-        await _probeService.ProbeBatchAsync(
+        var result = await _probeService.ProbeBatchAsync(
             unprobed,
             config.ProbeParallelism,
             config.ProbeTimeoutSeconds,
             config.ProbeCooldownMs,
             progress,
             token).ConfigureAwait(false);
+
+        if (config.DeleteFailedStrms && result.FailedItems.Count > 0)
+        {
+            var deleted = _probeService.DeleteStrmFiles(result.FailedItems);
+            _logger.LogInformation("Catch-up: deleted {Deleted} failed STRM files", deleted);
+        }
     }
 
     /// <inheritdoc />

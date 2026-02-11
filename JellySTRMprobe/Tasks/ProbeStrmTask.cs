@@ -85,7 +85,7 @@ public class ProbeStrmTask : IScheduledTask, IConfigurableScheduledTask
             config.ProbeTimeoutSeconds,
             config.ProbeCooldownMs);
 
-        var (probed, failed) = await _probeService.ProbeBatchAsync(
+        var result = await _probeService.ProbeBatchAsync(
             items,
             config.ProbeParallelism,
             config.ProbeTimeoutSeconds,
@@ -93,9 +93,15 @@ public class ProbeStrmTask : IScheduledTask, IConfigurableScheduledTask
             progress,
             cancellationToken).ConfigureAwait(false);
 
+        if (config.DeleteFailedStrms && result.FailedItems.Count > 0)
+        {
+            var deleted = _probeService.DeleteStrmFiles(result.FailedItems);
+            _logger.LogInformation("Deleted {Deleted} failed STRM files", deleted);
+        }
+
         _logger.LogInformation(
             "STRM probe task finished: {Probed} probed, {Failed} failed",
-            probed,
-            failed);
+            result.Probed,
+            result.Failed);
     }
 }

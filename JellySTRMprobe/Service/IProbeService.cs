@@ -36,12 +36,21 @@ public interface IProbeService
     /// <param name="cooldownMs">Cooldown in milliseconds between probes per worker.</param>
     /// <param name="progress">Progress reporter (0-100).</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>A tuple of (Probed, Failed) counts.</returns>
-    Task<(int Probed, int Failed)> ProbeBatchAsync(
+    /// <returns>A <see cref="ProbeResult"/> with counts and failed items.</returns>
+    Task<ProbeResult> ProbeBatchAsync(
         IReadOnlyList<BaseItem> items,
         int parallelism,
         int timeoutSeconds,
         int cooldownMs,
         IProgress<double> progress,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Deletes the STRM files on disk for the given items.
+    /// Only deletes files with a .strm extension (safety check).
+    /// Does not remove items from the Jellyfin database — the next library scan handles that.
+    /// </summary>
+    /// <param name="items">The items whose STRM files should be deleted.</param>
+    /// <returns>The number of files successfully deleted.</returns>
+    int DeleteStrmFiles(IReadOnlyList<BaseItem> items);
 }

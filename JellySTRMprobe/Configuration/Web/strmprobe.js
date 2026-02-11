@@ -10,6 +10,7 @@ var JellySTRMprobeConfig = {
             document.getElementById('txtProbeParallelism').value = config.ProbeParallelism;
             document.getElementById('txtProbeTimeoutSeconds').value = config.ProbeTimeoutSeconds;
             document.getElementById('txtProbeCooldownMs').value = config.ProbeCooldownMs;
+            document.getElementById('chkDeleteFailedStrms').checked = config.DeleteFailedStrms;
 
             self.selectedLibraryIds = config.SelectedLibraryIds || [];
             self.loadLibraries();
@@ -24,6 +25,7 @@ var JellySTRMprobeConfig = {
             config.ProbeParallelism = parseInt(document.getElementById('txtProbeParallelism').value, 10);
             config.ProbeTimeoutSeconds = parseInt(document.getElementById('txtProbeTimeoutSeconds').value, 10);
             config.ProbeCooldownMs = parseInt(document.getElementById('txtProbeCooldownMs').value, 10);
+            config.DeleteFailedStrms = document.getElementById('chkDeleteFailedStrms').checked;
             config.SelectedLibraryIds = self.getSelectedLibraryIds();
 
             ApiClient.updatePluginConfiguration(self.pluginUniqueId, config).then(function () {

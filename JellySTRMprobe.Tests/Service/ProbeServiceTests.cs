@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
@@ -173,11 +174,12 @@ public class ProbeServiceTests
 
         var progress = new Progress<double>();
 
-        var (probed, failed) = await _probeService.ProbeBatchAsync(
+        var result = await _probeService.ProbeBatchAsync(
             items, 5, 60, 0, progress, CancellationToken.None);
 
-        probed.Should().Be(5);
-        failed.Should().Be(0);
+        result.Probed.Should().Be(5);
+        result.Failed.Should().Be(0);
+        result.FailedItems.Should().BeEmpty();
     }
 
     [Fact]
@@ -211,11 +213,12 @@ public class ProbeServiceTests
 
         var progress = new Progress<double>();
 
-        var (probed, failed) = await _probeService.ProbeBatchAsync(
+        var result = await _probeService.ProbeBatchAsync(
             items, 1, 60, 0, progress, CancellationToken.None);
 
-        probed.Should().Be(3);
-        failed.Should().Be(2);
+        result.Probed.Should().Be(3);
+        result.Failed.Should().Be(2);
+        result.FailedItems.Should().HaveCount(2);
     }
 
     [Fact]
@@ -358,11 +361,12 @@ public class ProbeServiceTests
         var items = new List<BaseItem>();
         var progress = new Progress<double>();
 
-        var (probed, failed) = await _probeService.ProbeBatchAsync(
+        var result = await _probeService.ProbeBatchAsync(
             items, 5, 60, 0, progress, CancellationToken.None);
 
-        probed.Should().Be(0);
-        failed.Should().Be(0);
+        result.Probed.Should().Be(0);
+        result.Failed.Should().Be(0);
+        result.FailedItems.Should().BeEmpty();
     }
 
     // =====================
@@ -498,5 +502,101 @@ public class ProbeServiceTests
 
         result.Should().HaveCount(1);
         result[0].Name.Should().Be("Good STRM");
+    }
+
+    // =====================
+    // DeleteStrmFiles Tests
+    // =====================
+
+    [Fact]
+    public void DeleteStrmFiles_DeletesExistingStrmFiles()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), "jellystrm-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+
+        try
+        {
+            var strmPath = Path.Combine(tempDir, "movie.strm");
+            File.WriteAllText(strmPath, "http://example.com/stream.mkv");
+
+            var item = CreateMockItem("Test Movie", strmPath);
+            var items = new List<BaseItem> { item };
+
+            var deleted = _probeService.DeleteStrmFiles(items);
+
+            deleted.Should().Be(1);
+            File.Exists(strmPath).Should().BeFalse();
+        }
+        finally
+        {
+            Directory.Delete(tempDir, true);
+        }
+    }
+
+    [Fact]
+    public void DeleteStrmFiles_SkipsNonStrmPaths()
+    {
+        var item = CreateMockItem("MKV Movie", "/media/movie.mkv");
+        var items = new List<BaseItem> { item };
+
+        var deleted = _probeService.DeleteStrmFiles(items);
+
+        deleted.Should().Be(0);
+    }
+
+    [Fact]
+    public void DeleteStrmFiles_SkipsNullPaths()
+    {
+        var item = CreateMockItem("No Path");
+        var items = new List<BaseItem> { item };
+
+        var deleted = _probeService.DeleteStrmFiles(items);
+
+        deleted.Should().Be(0);
+    }
+
+    [Fact]
+    public void DeleteStrmFiles_HandlesNonExistentFileGracefully()
+    {
+        var item = CreateMockItem("Missing STRM", "/nonexistent/path/movie.strm");
+        var items = new List<BaseItem> { item };
+
+        // Non-existent directory causes DirectoryNotFoundException, caught gracefully
+        var deleted = _probeService.DeleteStrmFiles(items);
+
+        deleted.Should().Be(0);
+    }
+
+    [Fact]
+    public void DeleteStrmFiles_ReturnsCorrectCountForMixedItems()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), "jellystrm-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+
+        try
+        {
+            var strmPath1 = Path.Combine(tempDir, "movie1.strm");
+            var strmPath2 = Path.Combine(tempDir, "movie2.strm");
+            File.WriteAllText(strmPath1, "http://example.com/1.mkv");
+            File.WriteAllText(strmPath2, "http://example.com/2.mkv");
+
+            var items = new List<BaseItem>
+            {
+                CreateMockItem("Movie 1", strmPath1),
+                CreateMockItem("Not STRM", "/media/movie.mkv"),
+                CreateMockItem("Movie 2", strmPath2),
+                CreateMockItem("No Path"),
+            };
+
+            var deleted = _probeService.DeleteStrmFiles(items);
+
+            deleted.Should().Be(2);
+            File.Exists(strmPath1).Should().BeFalse();
+            File.Exists(strmPath2).Should().BeFalse();
+        }
+        finally
+        {
+            Directory.Delete(tempDir, true);
+        }
     }
 }

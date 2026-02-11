@@ -91,7 +91,7 @@ public class ProbeStrmTaskTests
                 It.IsAny<int>(),
                 It.IsAny<IProgress<double>>(),
                 It.IsAny<CancellationToken>()))
-            .ReturnsAsync((3, 0));
+            .ReturnsAsync(new ProbeResult { Probed = 3, Failed = 0 });
 
         var progress = new Progress<double>();
 
@@ -130,7 +130,7 @@ public class ProbeStrmTaskTests
                 It.IsAny<int>(),
                 It.IsAny<IProgress<double>>(),
                 It.IsAny<CancellationToken>()))
-            .ReturnsAsync((1, 0));
+            .ReturnsAsync(new ProbeResult { Probed = 1, Failed = 0 });
 
         var progress = new Progress<double>();
 
