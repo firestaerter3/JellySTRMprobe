@@ -1,2 +1,4 @@
 <Solution>
+  <Project Path="JellySTRMprobe/JellySTRMprobe.csproj" />
+  <Project Path="JellySTRMprobe.Tests/JellySTRMprobe.Tests.csproj" />
 </Solution>
