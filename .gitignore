@@ -18,5 +18,8 @@ packages/
 .DS_Store
 Thumbs.db
 
+# Solution file (JPRM can't handle .sln in root — use locally only)
+*.sln
+
 # Claude local context (contains credentials)
 *.local.md
