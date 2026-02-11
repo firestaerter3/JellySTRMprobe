@@ -148,8 +148,22 @@ public class CatchUpEntryPoint : IHostedService, IDisposable
 
         if (config.DeleteFailedStrms && result.FailedItems.Count > 0)
         {
-            var deleted = _probeService.DeleteStrmFiles(result.FailedItems);
-            _logger.LogInformation("Catch-up: deleted {Deleted} failed STRM files", deleted);
+            var totalProbed = result.Probed + result.Failed;
+            var failurePercent = (double)result.Failed / totalProbed * 100;
+
+            if (failurePercent > config.DeleteFailureThreshold)
+            {
+                _logger.LogWarning(
+                    "Catch-up: failure rate {Rate:F1}% exceeds threshold {Threshold}% — skipping deletion of {Count} STRM files (provider may be down)",
+                    failurePercent,
+                    config.DeleteFailureThreshold,
+                    result.FailedItems.Count);
+            }
+            else
+            {
+                var deleted = _probeService.DeleteStrmFiles(result.FailedItems);
+                _logger.LogInformation("Catch-up: deleted {Deleted} failed STRM files ({Rate:F1}% failure rate)", deleted, failurePercent);
+            }
         }
     }
 

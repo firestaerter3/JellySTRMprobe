@@ -39,6 +39,12 @@ public class PluginConfiguration : BasePluginConfiguration
     public bool DeleteFailedStrms { get; set; } = false;
 
     /// <summary>
+    /// Gets or sets the maximum failure percentage before deletion is skipped.
+    /// If the failure rate exceeds this threshold, no files are deleted (provider may be down).
+    /// </summary>
+    public int DeleteFailureThreshold { get; set; } = 10;
+
+    /// <summary>
     /// Gets or sets the array of selected library IDs to probe.
     /// Empty array means probe all libraries.
     /// </summary>
@@ -52,5 +58,6 @@ public class PluginConfiguration : BasePluginConfiguration
         ProbeParallelism = Math.Clamp(ProbeParallelism, 1, 20);
         ProbeTimeoutSeconds = Math.Clamp(ProbeTimeoutSeconds, 10, 300);
         ProbeCooldownMs = Math.Clamp(ProbeCooldownMs, 0, 5000);
+        DeleteFailureThreshold = Math.Clamp(DeleteFailureThreshold, 1, 100);
     }
 }
