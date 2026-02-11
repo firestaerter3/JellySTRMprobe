@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -109,7 +111,7 @@ public class ProbeService : IProbeService
     }
 
     /// <inheritdoc />
-    public async Task<(int Probed, int Failed)> ProbeBatchAsync(
+    public async Task<ProbeResult> ProbeBatchAsync(
         IReadOnlyList<BaseItem> items,
         int parallelism,
         int timeoutSeconds,
@@ -120,12 +122,13 @@ public class ProbeService : IProbeService
         if (items.Count == 0)
         {
             progress.Report(100);
-            return (0, 0);
+            return new ProbeResult();
         }
 
         var probed = 0;
         var failed = 0;
         var processed = 0;
+        var failedItems = new ConcurrentBag<BaseItem>();
         var directoryService = new DirectoryService(_fileSystem);
 
         await Parallel.ForEachAsync(
@@ -146,6 +149,7 @@ public class ProbeService : IProbeService
                 else
                 {
                     Interlocked.Increment(ref failed);
+                    failedItems.Add(item);
                 }
 
                 var current = Interlocked.Increment(ref processed);
@@ -163,7 +167,42 @@ public class ProbeService : IProbeService
             failed,
             items.Count);
 
-        return (probed, failed);
+        return new ProbeResult
+        {
+            Probed = probed,
+            Failed = failed,
+            FailedItems = failedItems.ToArray(),
+        };
+    }
+
+    /// <inheritdoc />
+    public int DeleteStrmFiles(IReadOnlyList<BaseItem> items)
+    {
+        var deleted = 0;
+
+        foreach (var item in items)
+        {
+            var path = item.Path;
+
+            if (string.IsNullOrEmpty(path) || !path.EndsWith(".strm", StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogWarning("Skipping non-STRM path for deletion: {Path}", path);
+                continue;
+            }
+
+            try
+            {
+                File.Delete(path);
+                deleted++;
+                _logger.LogDebug("Deleted failed STRM file: {Path}", path);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to delete STRM file: {Path}", path);
+            }
+        }
+
+        return deleted;
     }
 
     private async Task<bool> ProbeItemCoreAsync(

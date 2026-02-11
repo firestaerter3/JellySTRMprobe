@@ -69,6 +69,20 @@
                     </div>
 
                     <div class="verticalSection">
+                        <h3 class="sectionTitle">Post-Probe Actions</h3>
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label class="emby-checkbox-label">
+                                <input is="emby-checkbox" type="checkbox" id="chkDeleteFailedStrms" />
+                                <span>Delete failed STRM files after probing</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">
+                                Remove STRM files that fail to probe (dead/unavailable streams).
+                                Files are recreated on the next library sync, giving them a fresh chance nightly.
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="verticalSection">
                         <h3 class="sectionTitle">Library Selection</h3>
                         <p class="fieldDescription">
                             Select which libraries to probe. Leave all unchecked to probe all libraries.

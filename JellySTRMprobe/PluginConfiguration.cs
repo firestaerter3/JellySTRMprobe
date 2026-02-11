@@ -32,6 +32,13 @@ public class PluginConfiguration : BasePluginConfiguration
     public int ProbeCooldownMs { get; set; } = 200;
 
     /// <summary>
+    /// Gets or sets a value indicating whether failed STRM files should be deleted after probing.
+    /// When enabled, STRM files that fail to probe (dead/unavailable streams) are removed from disk.
+    /// Files are recreated on the next library sync, giving them a fresh chance nightly.
+    /// </summary>
+    public bool DeleteFailedStrms { get; set; } = false;
+
+    /// <summary>
     /// Gets or sets the array of selected library IDs to probe.
     /// Empty array means probe all libraries.
     /// </summary>
