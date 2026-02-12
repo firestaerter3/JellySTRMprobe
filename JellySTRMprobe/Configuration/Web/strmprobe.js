@@ -67,7 +67,65 @@ var JellySTRMprobeConfig = {
         return ids;
     },
 
-    selectedLibraryIds: []
+    selectedLibraryIds: [],
+
+    loadSchedule: function () {
+        ApiClient.getScheduledTasks().then(function (tasks) {
+            var task = tasks.find(function (t) { return t.Key === 'StrmProbeMediaInfo'; });
+            if (!task) { return; }
+
+            var section = document.getElementById('scheduleSection');
+            var container = document.getElementById('scheduleStatus');
+            section.style.display = '';
+
+            var lines = [];
+
+            // Triggers
+            if (task.Triggers && task.Triggers.length > 0) {
+                var triggerDescs = task.Triggers.map(function (tr) {
+                    if (tr.Type === 'DailyTrigger') {
+                        return 'Daily at ' + JellySTRMprobeConfig.ticksToTime(tr.TimeOfDayTicks);
+                    } else if (tr.Type === 'IntervalTrigger') {
+                        var hours = tr.IntervalTicks / 36000000000;
+                        return 'Every ' + hours + ' hour' + (hours !== 1 ? 's' : '');
+                    } else if (tr.Type === 'StartupTrigger') {
+                        return 'On startup';
+                    } else if (tr.Type === 'WeeklyTrigger') {
+                        return tr.DayOfWeek + ' at ' + JellySTRMprobeConfig.ticksToTime(tr.TimeOfDayTicks);
+                    }
+                    return tr.Type;
+                });
+                lines.push('<b>Schedule:</b> ' + triggerDescs.join(', '));
+            } else {
+                lines.push('<b>Schedule:</b> No triggers configured');
+            }
+
+            // State
+            lines.push('<b>Status:</b> ' + task.State);
+
+            // Last run
+            if (task.LastExecutionResult) {
+                var r = task.LastExecutionResult;
+                var endDate = new Date(r.EndTimeUtc);
+                var timeStr = endDate.toLocaleString();
+                var statusBadge = r.Status === 'Completed'
+                    ? '<span style="color:#4caf50">' + r.Status + '</span>'
+                    : '<span style="color:#f44336">' + r.Status + '</span>';
+                lines.push('<b>Last run:</b> ' + timeStr + ' — ' + statusBadge);
+            }
+
+            container.innerHTML = lines.join('<br/>');
+        });
+    },
+
+    ticksToTime: function (ticks) {
+        var totalMinutes = Math.round(ticks / 600000000);
+        var hours = Math.floor(totalMinutes / 60);
+        var minutes = totalMinutes % 60;
+        var ampm = hours >= 12 ? 'PM' : 'AM';
+        var displayHours = hours % 12 || 12;
+        return displayHours + ':' + (minutes < 10 ? '0' : '') + minutes + ' ' + ampm;
+    }
 };
 
 function initJellySTRMprobeConfig() {
@@ -82,6 +140,7 @@ function initJellySTRMprobeConfig() {
     }
 
     JellySTRMprobeConfig.loadConfig();
+    JellySTRMprobeConfig.loadSchedule();
 }
 
 if (document.readyState === 'loading') {
