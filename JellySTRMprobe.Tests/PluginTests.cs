@@ -5,6 +5,7 @@ using Xunit;
 
 namespace JellySTRMprobe.Tests;
 
+[Collection("PluginInstance")]
 public class PluginTests
 {
     public PluginTests()

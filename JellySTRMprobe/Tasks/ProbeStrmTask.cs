@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JellySTRMprobe.Service;
+using MediaBrowser.Controller.Entities;
 using MediaBrowser.Model.Tasks;
 using Microsoft.Extensions.Logging;
 
@@ -14,16 +16,19 @@ namespace JellySTRMprobe.Tasks;
 public class ProbeStrmTask : IScheduledTask, IConfigurableScheduledTask
 {
     private readonly IProbeService _probeService;
+    private readonly IPlaybackGate _playbackGate;
     private readonly ILogger<ProbeStrmTask> _logger;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ProbeStrmTask"/> class.
     /// </summary>
     /// <param name="probeService">Instance of the <see cref="IProbeService"/>.</param>
+    /// <param name="playbackGate">Instance of the <see cref="IPlaybackGate"/>.</param>
     /// <param name="logger">Instance of the <see cref="ILogger{ProbeStrmTask}"/>.</param>
-    public ProbeStrmTask(IProbeService probeService, ILogger<ProbeStrmTask> logger)
+    public ProbeStrmTask(IProbeService probeService, IPlaybackGate playbackGate, ILogger<ProbeStrmTask> logger)
     {
         _probeService = probeService;
+        _playbackGate = playbackGate;
         _logger = logger;
     }
 
@@ -49,16 +54,13 @@ public class ProbeStrmTask : IScheduledTask, IConfigurableScheduledTask
     public bool IsLogged => true;
 
     /// <inheritdoc />
+    /// <remarks>
+    /// No trigger by default: every probe opens a connection to the upstream server, so when and
+    /// how long the task runs is left to the administrator (Dashboard, Scheduled Tasks).
+    /// </remarks>
     public IEnumerable<TaskTriggerInfo> GetDefaultTriggers()
     {
-        return new[]
-        {
-            new TaskTriggerInfo
-            {
-                Type = TaskTriggerInfoType.DailyTrigger,
-                TimeOfDayTicks = TimeSpan.FromHours(4).Ticks,
-            },
-        };
+        return Array.Empty<TaskTriggerInfo>();
     }
 
     /// <inheritdoc />
@@ -69,7 +71,10 @@ public class ProbeStrmTask : IScheduledTask, IConfigurableScheduledTask
 
         _logger.LogInformation("Starting STRM probe task");
 
-        var items = _probeService.GetUnprobedItems(config.SelectedLibraryIds);
+        var allItems = _probeService.GetUnprobedItems(config.SelectedLibraryIds);
+        IReadOnlyList<BaseItem> items = allItems.Count > config.MaxItemsPerRun
+            ? allItems.Take(config.MaxItemsPerRun).ToList()
+            : allItems;
 
         if (items.Count == 0)
         {
@@ -79,21 +84,30 @@ public class ProbeStrmTask : IScheduledTask, IConfigurableScheduledTask
         }
 
         _logger.LogInformation(
-            "Probing {Count} items with parallelism={Parallelism}, timeout={Timeout}s, cooldown={Cooldown}ms",
+            "Probing {Count} of {Total} unprobed items with parallelism={Parallelism}, timeout={Timeout}s, cooldown={Cooldown}ms, stop after {MaxFailures} failures in a row",
             items.Count,
-            config.ProbeParallelism,
-            config.ProbeTimeoutSeconds,
-            config.ProbeCooldownMs);
-
-        var result = await _probeService.ProbeBatchAsync(
-            items,
+            allItems.Count,
             config.ProbeParallelism,
             config.ProbeTimeoutSeconds,
             config.ProbeCooldownMs,
-            progress,
-            cancellationToken).ConfigureAwait(false);
+            config.MaxConsecutiveFailures);
 
-        if (config.DeleteFailedStrms && result.FailedItems.Count > 0)
+        var options = new ProbeBatchOptions
+        {
+            Parallelism = config.ProbeParallelism,
+            TimeoutSeconds = config.ProbeTimeoutSeconds,
+            CooldownMs = config.ProbeCooldownMs,
+            MaxConsecutiveFailures = config.MaxConsecutiveFailures,
+            BeforeEachAsync = config.PauseWhileStrmPlaying ? _playbackGate.WaitUntilNoStrmPlayingAsync : null,
+        };
+
+        var result = await _probeService.ProbeBatchAsync(items, options, progress, cancellationToken).ConfigureAwait(false);
+
+        if (result.StoppedOnFailures && config.DeleteFailedStrms)
+        {
+            _logger.LogWarning("Run stopped on consecutive failures; no STRM files are deleted");
+        }
+        else if (config.DeleteFailedStrms && result.FailedItems.Count > 0)
         {
             var totalProbed = result.Probed + result.Failed;
             var failurePercent = (double)result.Failed / totalProbed * 100;

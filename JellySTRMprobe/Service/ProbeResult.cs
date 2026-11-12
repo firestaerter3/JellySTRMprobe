@@ -22,4 +22,9 @@ public class ProbeResult
     /// Gets the list of items that failed to probe.
     /// </summary>
     public IReadOnlyList<BaseItem> FailedItems { get; init; } = [];
+
+    /// <summary>
+    /// Gets a value indicating whether the batch stopped early because too many probes failed in a row.
+    /// </summary>
+    public bool StoppedOnFailures { get; init; }
 }

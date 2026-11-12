@@ -26,6 +26,21 @@
                     </div>
 
                     <div class="verticalSection">
+                        <h3 class="sectionTitle">Fast Start</h3>
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label class="emby-checkbox-label">
+                                <input is="emby-checkbox" type="checkbox" id="chkEnableFastStart" />
+                                <span>Skip the probe on playback of already probed STRM items</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">
+                                Jellyfin probes a STRM file and refreshes its metadata on every playback, even when
+                                the streams are already known. That costs about 10 seconds per start. With this on,
+                                an item that already has a video stream starts without that step. Items that were
+                                never probed still get Jellyfin's normal probe on their first start.
+                            </div>
+                        </div>
+                    </div>
+                    <div class="verticalSection">
                         <h3 class="sectionTitle">Catch-up Mode</h3>
                         <div class="checkboxContainer checkboxContainer-withDescription">
                             <label class="emby-checkbox-label">
@@ -33,8 +48,9 @@
                                 <span>Enable catch-up mode</span>
                             </label>
                             <div class="fieldDescription checkboxFieldDescription">
-                                Automatically probe new STRM items when they are added during library scans.
-                                Items are debounced (30 seconds) to batch-probe efficiently.
+                                Automatically probe new STRM items in the selected libraries when they are added
+                                during library scans. Items are debounced (30 seconds) to batch-probe efficiently.
+                                Off by default: after a large sync this starts many probes at any time of day.
                             </div>
                         </div>
                     </div>
@@ -67,12 +83,44 @@
 
                         <div class="inputContainer">
                             <label class="inputLabel inputLabelUnfocused" for="txtProbeCooldownMs">
-                                Cooldown between probes (0-5000 ms)
+                                Cooldown between probes (0-60000 ms)
                             </label>
                             <input is="emby-input" type="number" id="txtProbeCooldownMs"
-                                   min="0" max="5000" step="50" />
+                                   min="0" max="60000" step="100" />
                             <div class="fieldDescription">
                                 Delay between probe operations to prevent connection exhaustion on upstream servers.
+                            </div>
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="txtMaxItemsPerRun">
+                                Maximum items per run
+                            </label>
+                            <input is="emby-input" type="number" id="txtMaxItemsPerRun"
+                                   min="1" max="1000000" step="1" />
+                            <div class="fieldDescription">
+                                A run of the scheduled task, or one catch-up batch, probes at most this many items.
+                                The rest waits for the next run.
+                            </div>
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="txtMaxConsecutiveFailures">
+                                Stop after this many failures in a row
+                            </label>
+                            <input is="emby-input" type="number" id="txtMaxConsecutiveFailures"
+                                   min="1" max="10000" step="1" />
+                            <div class="fieldDescription">
+                                A run of failed probes usually means the upstream server is down. The run stops,
+                                and no STRM files are deleted in that run.
+                            </div>
+                        </div>
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label class="emby-checkbox-label">
+                                <input is="emby-checkbox" type="checkbox" id="chkPauseWhileStrmPlaying" />
+                                <span>Wait while someone is playing a STRM item</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">
+                                A probe uses a connection to the same upstream server as the viewer. With a provider
+                                that allows one connection, the two would block each other.
                             </div>
                         </div>
                     </div>
@@ -106,7 +154,7 @@
                     <div class="verticalSection">
                         <h3 class="sectionTitle">Library Selection</h3>
                         <p class="fieldDescription">
-                            Select which libraries to probe. Leave all unchecked to probe all libraries.
+                            Select the libraries for probing and fast start. Leave all unchecked to use all libraries.
                         </p>
                         <div id="libraryList"></div>
                     </div>

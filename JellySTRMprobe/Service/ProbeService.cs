@@ -111,7 +111,7 @@ public class ProbeService : IProbeService
     }
 
     /// <inheritdoc />
-    public async Task<ProbeResult> ProbeBatchAsync(
+    public Task<ProbeResult> ProbeBatchAsync(
         IReadOnlyList<BaseItem> items,
         int parallelism,
         int timeoutSeconds,
@@ -119,6 +119,25 @@ public class ProbeService : IProbeService
         IProgress<double> progress,
         CancellationToken cancellationToken)
     {
+        var options = new ProbeBatchOptions
+        {
+            Parallelism = parallelism,
+            TimeoutSeconds = timeoutSeconds,
+            CooldownMs = cooldownMs,
+        };
+
+        return ProbeBatchAsync(items, options, progress, cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public async Task<ProbeResult> ProbeBatchAsync(
+        IReadOnlyList<BaseItem> items,
+        ProbeBatchOptions options,
+        IProgress<double> progress,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+
         if (items.Count == 0)
         {
             progress.Report(100);
@@ -128,50 +147,104 @@ public class ProbeService : IProbeService
         var probed = 0;
         var failed = 0;
         var processed = 0;
+        var consecutiveFailures = 0;
+        var stoppedOnFailures = false;
+        var counterLock = new object();
         var failedItems = new ConcurrentBag<BaseItem>();
         var directoryService = new DirectoryService(_fileSystem);
 
-        await Parallel.ForEachAsync(
-            items,
-            new ParallelOptions
-            {
-                MaxDegreeOfParallelism = parallelism,
-                CancellationToken = cancellationToken,
-            },
-            async (item, ct) =>
-            {
-                var success = await ProbeItemCoreAsync(item, timeoutSeconds, directoryService, ct).ConfigureAwait(false);
+        using var stopCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 
-                if (success)
+        try
+        {
+            await Parallel.ForEachAsync(
+                items,
+                new ParallelOptions
                 {
-                    Interlocked.Increment(ref probed);
-                }
-                else
+                    MaxDegreeOfParallelism = Math.Max(1, options.Parallelism),
+                    CancellationToken = stopCts.Token,
+                },
+                async (item, ct) =>
                 {
-                    Interlocked.Increment(ref failed);
-                    failedItems.Add(item);
-                }
+                    if (options.BeforeEachAsync != null)
+                    {
+                        await options.BeforeEachAsync(ct).ConfigureAwait(false);
+                    }
 
-                var current = Interlocked.Increment(ref processed);
-                progress.Report((double)current / items.Count * 100);
+                    var success = await ProbeItemCoreAsync(item, options.TimeoutSeconds, directoryService, ct).ConfigureAwait(false);
 
-                if (cooldownMs > 0)
-                {
-                    await Task.Delay(cooldownMs, ct).ConfigureAwait(false);
-                }
-            }).ConfigureAwait(false);
+                    // Count and check under one lock, so "in a row" follows the order in which
+                    // probes finish, also when several run at the same time.
+                    var stopNow = false;
+                    lock (counterLock)
+                    {
+                        if (success)
+                        {
+                            probed++;
+                            consecutiveFailures = 0;
+                        }
+                        else
+                        {
+                            failed++;
+                            failedItems.Add(item);
+                            consecutiveFailures++;
+                            if (options.MaxConsecutiveFailures > 0
+                                && consecutiveFailures >= options.MaxConsecutiveFailures
+                                && !stoppedOnFailures)
+                            {
+                                stoppedOnFailures = true;
+                                stopNow = true;
+                            }
+                        }
+                    }
+
+                    if (stopNow)
+                    {
+                        _logger.LogWarning(
+                            "Stopping probe run after {Count} failed probes in a row; the upstream server may be down",
+                            options.MaxConsecutiveFailures);
+#pragma warning disable CA1849 // CancelAsync causes BadImageFormatException in Jellyfin's dispose pipeline
+                        stopCts.Cancel();
+#pragma warning restore CA1849
+                    }
+
+                    var current = Interlocked.Increment(ref processed);
+                    progress.Report((double)current / items.Count * 100);
+
+                    if (options.CooldownMs > 0)
+                    {
+                        await Task.Delay(options.CooldownMs, ct).ConfigureAwait(false);
+                    }
+                }).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && stoppedOnFailures)
+        {
+            // Stopped by the consecutive-failure limit, not by the caller.
+        }
+
+        int probedTotal;
+        int failedTotal;
+        bool stopped;
+        lock (counterLock)
+        {
+            probedTotal = probed;
+            failedTotal = failed;
+            stopped = stoppedOnFailures;
+        }
 
         _logger.LogInformation(
-            "Probe complete: {Probed} succeeded, {Failed} failed out of {Total}",
-            probed,
-            failed,
-            items.Count);
+            "Probe complete: {Probed} succeeded, {Failed} failed out of {Total}{Stopped}",
+            probedTotal,
+            failedTotal,
+            items.Count,
+            stopped ? " (stopped early on consecutive failures)" : string.Empty);
 
         return new ProbeResult
         {
-            Probed = probed,
-            Failed = failed,
+            Probed = probedTotal,
+            Failed = failedTotal,
             FailedItems = failedItems.ToArray(),
+            StoppedOnFailures = stopped,
         };
     }
 

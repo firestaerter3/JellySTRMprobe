@@ -13,35 +13,52 @@ Jellyfin treats STRM files as "shortcuts" and **never probes them during library
 - Filter/search by resolution or codec doesn't work
 - The version picker can't distinguish between quality variants
 
+**Every start is slow, too.** Jellyfin probes a STRM file and runs a full metadata
+refresh (probe, NFO, TMDb, OMDb) on **every** playback, even when the streams are already
+known. On the server this was measured on, that took about 10 seconds per start.
+
 ## How It Works
 
 The plugin calls Jellyfin's internal `RefreshSingleItem()` with `EnableRemoteContentProbe = true` — the same flag Jellyfin sets during playback. This triggers ffprobe against the STRM target URL without requiring the user to play every item first.
 
 ## Features
 
+### Fast Start
+Playback of a STRM item that already has a video stream stored skips Jellyfin's probe and
+metadata refresh, so it starts straight away. The plugin wraps Jellyfin's media source
+manager and changes only that one call. An item that was never probed still gets
+Jellyfin's normal probe on its first start: without stream information Jellyfin cannot
+direct play, and the transcode it falls back to fails.
+
 ### Scheduled Task
 A scheduled task (Dashboard > Scheduled Tasks > **Probe STRM Media Info**) that:
-- Finds all STRM items with no media stream data
-- Probes them in parallel with configurable concurrency
-- Runs daily at 4:00 AM by default (customizable)
+- Finds STRM items with no media stream data in the selected libraries
+- Probes at most *Maximum items per run* of them, the rest in the next run
+- Stops after *N* failures in a row (the upstream server is probably down)
+- Waits while someone plays a STRM item, so a provider with one connection is not blocked
+- Has **no schedule by default**: add a trigger, and a maximum run time, yourself
 - Reports progress and is cancellable from the Dashboard
 
 ### Catch-Up Mode
-Automatically probes new STRM items as they're added during library scans:
+Probes new STRM items in the selected libraries shortly after they are added:
 - Subscribes to Jellyfin's `ItemAdded` event
 - Debounces for 30 seconds to batch process items
-- Enabled by default (can be disabled in settings)
+- **Off by default**: after a large sync it starts many probes at any time of day
 
 ### Configuration
 All settings are accessible from Dashboard > Plugins > JellySTRMprobe:
 
 | Setting | Default | Range | Description |
 |---------|---------|-------|-------------|
-| Catch-Up Mode | Enabled | On/Off | Auto-probe new STRM items when added |
-| Parallelism | 5 | 1–20 | Concurrent probe operations |
+| Fast Start | On | On/Off | Skip the probe on playback of already probed STRM items |
+| Catch-Up Mode | Off | On/Off | Auto-probe new STRM items when added |
+| Parallelism | 1 | 1–20 | Concurrent probe operations (each holds an upstream connection) |
 | Timeout | 60s | 10–300s | Per-item probe timeout |
-| Cooldown | 200ms | 0–5000ms | Delay between probes (prevents upstream overload) |
-| Libraries | All | Multi-select | Which libraries to probe |
+| Cooldown | 2000ms | 0–60000ms | Delay after each probe |
+| Maximum items per run | 500 | 1–1000000 | Cap per task run or catch-up batch |
+| Stop after failures in a row | 10 | 1–10000 | Stops a run when the upstream server seems down |
+| Wait while a STRM item plays | On | On/Off | Pause probing during STRM playback |
+| Libraries | All | Multi-select | Libraries for probing and fast start |
 
 ## Installation
 
@@ -66,8 +83,8 @@ All settings are accessible from Dashboard > Plugins > JellySTRMprobe:
 
 ## Requirements
 
-- Jellyfin **10.11.0** or later
-- .NET 9.0
+- Jellyfin **12.0** or later, .NET 10 (2.x)
+- Jellyfin 10.11: use 1.x (`release/1.x` branch, release v1.2.0.0)
 
 ## Building from Source
 
