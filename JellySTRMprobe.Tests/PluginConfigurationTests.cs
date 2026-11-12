@@ -11,10 +11,15 @@ public class PluginConfigurationTests
     {
         var config = new PluginConfiguration();
 
-        config.EnableCatchUpMode.Should().BeTrue();
-        config.ProbeParallelism.Should().Be(5);
+        config.EnableFastStart.Should().BeTrue();
+        config.EnableCatchUpMode.Should().BeFalse();
+        config.ProbeParallelism.Should().Be(1);
         config.ProbeTimeoutSeconds.Should().Be(60);
-        config.ProbeCooldownMs.Should().Be(200);
+        config.ProbeCooldownMs.Should().Be(2000);
+        config.MaxItemsPerRun.Should().Be(500);
+        config.MaxConsecutiveFailures.Should().Be(10);
+        config.PauseWhileStrmPlaying.Should().BeTrue();
+        config.DeleteFailedStrms.Should().BeFalse();
         config.SelectedLibraryIds.Should().BeEmpty();
     }
 
@@ -63,5 +68,22 @@ public class PluginConfigurationTests
         config.ProbeParallelism.Should().Be(10);
         config.ProbeTimeoutSeconds.Should().Be(120);
         config.ProbeCooldownMs.Should().Be(500);
+    }
+
+    [Fact]
+    public void Validate_ClampsNewLimits()
+    {
+        var config = new PluginConfiguration
+        {
+            MaxItemsPerRun = 0,
+            MaxConsecutiveFailures = -5,
+            ProbeCooldownMs = 100000,
+        };
+
+        config.Validate();
+
+        config.MaxItemsPerRun.Should().Be(1);
+        config.MaxConsecutiveFailures.Should().Be(1);
+        config.ProbeCooldownMs.Should().Be(60000);
     }
 }

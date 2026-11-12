@@ -71,12 +71,24 @@ Copy `JellySTRMprobe.dll` to Jellyfin's plugin directory and restart.
 The plugin calls `IProviderManager.RefreshSingleItem()` with `EnableRemoteContentProbe = true` — the same flag Jellyfin sets during playback. This triggers ffprobe against the STRM target URL without requiring the user to play the content first.
 
 ## Target Framework
-- .NET 9.0
-- Jellyfin 10.11.0+
+- .NET 10.0
+- Jellyfin 12.0+ (2.x). Jellyfin 10.11 is served by the `release/1.x` branch.
 
 ## Key Dependencies
-- Jellyfin.Controller 10.11.0
-- Jellyfin.Model 10.11.0
+- Jellyfin.Controller 12.0.0
+- Jellyfin.Model 12.0.0
+
+## Fast start
+
+`Playback/FastStartMediaSourceManager.cs` wraps Jellyfin's `IMediaSourceManager`
+(registered in `PluginServiceRegistrator`; plugins register after the server, so the
+server's registration is already present). Jellyfin's `GetPlaybackMediaSources` runs a
+FullRefresh with a remote probe on every playback of a `.strm`, even when the streams
+are known. The wrapper passes `allowMediaProbe: false` only when the item is a `.strm`
+in a selected library and already has a video stream stored. Items without one keep the
+probe: without stream information Jellyfin cannot direct play and falls back to a
+transcode that fails (seen on 2026-11-12). Any exception in the check falls back to
+Jellyfin's normal behaviour.
 
 ## Related Projects
 

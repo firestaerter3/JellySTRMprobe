@@ -13,19 +13,22 @@ using Xunit;
 
 namespace JellySTRMprobe.Tests.EntryPoint;
 
+[Collection("PluginInstance")]
 public class CatchUpEntryPointTests
 {
     private readonly Mock<ILibraryManager> _mockLibraryManager;
     private readonly Mock<IProbeService> _mockProbeService;
+    private readonly Mock<IPlaybackGate> _mockPlaybackGate;
     private readonly Mock<ILogger<CatchUpEntryPoint>> _mockLogger;
 
     public CatchUpEntryPointTests()
     {
         _mockLibraryManager = new Mock<ILibraryManager>();
         _mockProbeService = new Mock<IProbeService>();
+        _mockPlaybackGate = new Mock<IPlaybackGate>();
         _mockLogger = new Mock<ILogger<CatchUpEntryPoint>>();
 
-        TestHelpers.EnsurePluginInstance();
+        TestHelpers.ResetConfiguration();
     }
 
     private CatchUpEntryPoint CreateEntryPoint()
@@ -33,6 +36,7 @@ public class CatchUpEntryPointTests
         return new CatchUpEntryPoint(
             _mockLibraryManager.Object,
             _mockProbeService.Object,
+            _mockPlaybackGate.Object,
             _mockLogger.Object);
     }
 
@@ -81,9 +85,7 @@ public class CatchUpEntryPointTests
 
         _mockProbeService.Verify(s => s.ProbeBatchAsync(
             It.IsAny<IReadOnlyList<BaseItem>>(),
-            It.IsAny<int>(),
-            It.IsAny<int>(),
-            It.IsAny<int>(),
+            It.IsAny<ProbeBatchOptions>(),
             It.IsAny<IProgress<double>>(),
             It.IsAny<CancellationToken>()), Times.Never);
 
@@ -107,9 +109,7 @@ public class CatchUpEntryPointTests
 
         _mockProbeService.Verify(s => s.ProbeBatchAsync(
             It.IsAny<IReadOnlyList<BaseItem>>(),
-            It.IsAny<int>(),
-            It.IsAny<int>(),
-            It.IsAny<int>(),
+            It.IsAny<ProbeBatchOptions>(),
             It.IsAny<IProgress<double>>(),
             It.IsAny<CancellationToken>()), Times.Never);
 

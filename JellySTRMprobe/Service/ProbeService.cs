@@ -111,7 +111,7 @@ public class ProbeService : IProbeService
     }
 
     /// <inheritdoc />
-    public async Task<ProbeResult> ProbeBatchAsync(
+    public Task<ProbeResult> ProbeBatchAsync(
         IReadOnlyList<BaseItem> items,
         int parallelism,
         int timeoutSeconds,
@@ -119,6 +119,25 @@ public class ProbeService : IProbeService
         IProgress<double> progress,
         CancellationToken cancellationToken)
     {
+        var options = new ProbeBatchOptions
+        {
+            Parallelism = parallelism,
+            TimeoutSeconds = timeoutSeconds,
+            CooldownMs = cooldownMs,
+        };
+
+        return ProbeBatchAsync(items, options, progress, cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public async Task<ProbeResult> ProbeBatchAsync(
+        IReadOnlyList<BaseItem> items,
+        ProbeBatchOptions options,
+        IProgress<double> progress,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+
         if (items.Count == 0)
         {
             progress.Report(100);
@@ -128,50 +147,84 @@ public class ProbeService : IProbeService
         var probed = 0;
         var failed = 0;
         var processed = 0;
+        var consecutiveFailures = 0;
+        var stoppedOnFailures = false;
         var failedItems = new ConcurrentBag<BaseItem>();
         var directoryService = new DirectoryService(_fileSystem);
 
-        await Parallel.ForEachAsync(
-            items,
-            new ParallelOptions
-            {
-                MaxDegreeOfParallelism = parallelism,
-                CancellationToken = cancellationToken,
-            },
-            async (item, ct) =>
-            {
-                var success = await ProbeItemCoreAsync(item, timeoutSeconds, directoryService, ct).ConfigureAwait(false);
+        using var stopCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 
-                if (success)
+        try
+        {
+            await Parallel.ForEachAsync(
+                items,
+                new ParallelOptions
                 {
-                    Interlocked.Increment(ref probed);
-                }
-                else
+                    MaxDegreeOfParallelism = Math.Max(1, options.Parallelism),
+                    CancellationToken = stopCts.Token,
+                },
+                async (item, ct) =>
                 {
-                    Interlocked.Increment(ref failed);
-                    failedItems.Add(item);
-                }
+                    if (options.BeforeEachAsync != null)
+                    {
+                        await options.BeforeEachAsync(ct).ConfigureAwait(false);
+                    }
 
-                var current = Interlocked.Increment(ref processed);
-                progress.Report((double)current / items.Count * 100);
+                    var success = await ProbeItemCoreAsync(item, options.TimeoutSeconds, directoryService, ct).ConfigureAwait(false);
 
-                if (cooldownMs > 0)
-                {
-                    await Task.Delay(cooldownMs, ct).ConfigureAwait(false);
-                }
-            }).ConfigureAwait(false);
+                    if (success)
+                    {
+                        Interlocked.Increment(ref probed);
+                        Interlocked.Exchange(ref consecutiveFailures, 0);
+                    }
+                    else
+                    {
+                        Interlocked.Increment(ref failed);
+                        failedItems.Add(item);
+                        var inARow = Interlocked.Increment(ref consecutiveFailures);
+                        if (options.MaxConsecutiveFailures > 0 && inARow >= options.MaxConsecutiveFailures)
+                        {
+                            if (!Volatile.Read(ref stoppedOnFailures))
+                            {
+                                Volatile.Write(ref stoppedOnFailures, true);
+                                _logger.LogWarning(
+                                    "Stopping probe run after {Count} failed probes in a row; the upstream server may be down",
+                                    inARow);
+                            }
+
+#pragma warning disable CA1849 // CancelAsync causes BadImageFormatException in Jellyfin's dispose pipeline
+                            stopCts.Cancel();
+#pragma warning restore CA1849
+                        }
+                    }
+
+                    var current = Interlocked.Increment(ref processed);
+                    progress.Report((double)current / items.Count * 100);
+
+                    if (options.CooldownMs > 0)
+                    {
+                        await Task.Delay(options.CooldownMs, ct).ConfigureAwait(false);
+                    }
+                }).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && Volatile.Read(ref stoppedOnFailures))
+        {
+            // Stopped by the consecutive-failure limit, not by the caller.
+        }
 
         _logger.LogInformation(
-            "Probe complete: {Probed} succeeded, {Failed} failed out of {Total}",
+            "Probe complete: {Probed} succeeded, {Failed} failed out of {Total}{Stopped}",
             probed,
             failed,
-            items.Count);
+            items.Count,
+            stoppedOnFailures ? " (stopped early on consecutive failures)" : string.Empty);
 
         return new ProbeResult
         {
             Probed = probed,
             Failed = failed,
             FailedItems = failedItems.ToArray(),
+            StoppedOnFailures = stoppedOnFailures,
         };
     }
 

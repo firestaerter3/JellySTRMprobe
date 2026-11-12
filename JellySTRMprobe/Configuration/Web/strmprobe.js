@@ -6,7 +6,11 @@ var JellySTRMprobeConfig = {
         var self = this;
 
         ApiClient.getPluginConfiguration(self.pluginUniqueId).then(function (config) {
+            document.getElementById('chkEnableFastStart').checked = config.EnableFastStart;
             document.getElementById('chkEnableCatchUpMode').checked = config.EnableCatchUpMode;
+            document.getElementById('txtMaxItemsPerRun').value = config.MaxItemsPerRun;
+            document.getElementById('txtMaxConsecutiveFailures').value = config.MaxConsecutiveFailures;
+            document.getElementById('chkPauseWhileStrmPlaying').checked = config.PauseWhileStrmPlaying;
             document.getElementById('txtProbeParallelism').value = config.ProbeParallelism;
             document.getElementById('txtProbeTimeoutSeconds').value = config.ProbeTimeoutSeconds;
             document.getElementById('txtProbeCooldownMs').value = config.ProbeCooldownMs;
@@ -22,7 +26,11 @@ var JellySTRMprobeConfig = {
         var self = this;
 
         ApiClient.getPluginConfiguration(self.pluginUniqueId).then(function (config) {
+            config.EnableFastStart = document.getElementById('chkEnableFastStart').checked;
             config.EnableCatchUpMode = document.getElementById('chkEnableCatchUpMode').checked;
+            config.MaxItemsPerRun = parseInt(document.getElementById('txtMaxItemsPerRun').value, 10);
+            config.MaxConsecutiveFailures = parseInt(document.getElementById('txtMaxConsecutiveFailures').value, 10);
+            config.PauseWhileStrmPlaying = document.getElementById('chkPauseWhileStrmPlaying').checked;
             config.ProbeParallelism = parseInt(document.getElementById('txtProbeParallelism').value, 10);
             config.ProbeTimeoutSeconds = parseInt(document.getElementById('txtProbeTimeoutSeconds').value, 10);
             config.ProbeCooldownMs = parseInt(document.getElementById('txtProbeCooldownMs').value, 10);
