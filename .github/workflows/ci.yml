@@ -36,3 +36,18 @@ jobs:
 
       - name: Test
         run: dotnet test -c Release --no-build
+
+      # The plugin zip as an artifact, so a release can attach the exact build CI tested.
+      - name: Package plugin zip
+        run: |
+          version=$(grep -oP '(?<=<AssemblyVersion>)[^<]+' JellySTRMprobe/JellySTRMprobe.csproj)
+          dotnet publish JellySTRMprobe/JellySTRMprobe.csproj -c Release --no-build -o publish
+          mkdir -p dist
+          (cd publish && zip -j "../dist/jellystrm-probe_${version}.zip" JellySTRMprobe.dll)
+          (cd dist && md5sum *.zip)
+
+      - name: Upload plugin zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: jellystrm-probe-zip
+          path: dist/*.zip
