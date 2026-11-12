@@ -260,6 +260,9 @@ public class CatchUpEntryPoint : IHostedService, IDisposable
             return;
         }
 
+        // Set first, so a batch that is still running sees it and does not touch the semaphore.
+        _disposed = true;
+
         if (disposing)
         {
             _libraryManager.ItemAdded -= OnItemAdded;
@@ -268,7 +271,5 @@ public class CatchUpEntryPoint : IHostedService, IDisposable
             _debounceTimer?.Dispose();
             _batchLock.Dispose();
         }
-
-        _disposed = true;
     }
 }
