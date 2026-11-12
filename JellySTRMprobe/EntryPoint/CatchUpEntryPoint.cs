@@ -21,6 +21,7 @@ public class CatchUpEntryPoint : IHostedService, IDisposable
 
     private readonly ILibraryManager _libraryManager;
     private readonly IProbeService _probeService;
+    private readonly IPlaybackGate _playbackGate;
     private readonly ILogger<CatchUpEntryPoint> _logger;
     private readonly ConcurrentQueue<BaseItem> _pendingItems = new();
 
@@ -33,14 +34,17 @@ public class CatchUpEntryPoint : IHostedService, IDisposable
     /// </summary>
     /// <param name="libraryManager">Instance of the <see cref="ILibraryManager"/> interface.</param>
     /// <param name="probeService">Instance of the <see cref="IProbeService"/>.</param>
+    /// <param name="playbackGate">Instance of the <see cref="IPlaybackGate"/>.</param>
     /// <param name="logger">Instance of the <see cref="ILogger{CatchUpEntryPoint}"/>.</param>
     public CatchUpEntryPoint(
         ILibraryManager libraryManager,
         IProbeService probeService,
+        IPlaybackGate playbackGate,
         ILogger<CatchUpEntryPoint> logger)
     {
         _libraryManager = libraryManager;
         _probeService = probeService;
+        _playbackGate = playbackGate;
         _logger = logger;
     }
 
@@ -78,8 +82,21 @@ public class CatchUpEntryPoint : IHostedService, IDisposable
 
         var item = e.Item;
 
-        if (item.Path == null || !item.Path.EndsWith(".strm", StringComparison.OrdinalIgnoreCase))
+        if (!LibraryScope.IsStrm(item))
         {
+            return;
+        }
+
+        try
+        {
+            if (!LibraryScope.IsInSelectedLibraries(_libraryManager, item, Plugin.Instance.Configuration.SelectedLibraryIds))
+            {
+                return;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Catch-up: could not determine the library of {ItemId}; skipping it", item.Id);
             return;
         }
 
@@ -130,23 +147,39 @@ public class CatchUpEntryPoint : IHostedService, IDisposable
             return;
         }
 
-        _logger.LogInformation("Catch-up: probing {Count} new STRM items", unprobed.Count);
-
         var config = Plugin.Instance.Configuration;
         config.Validate();
+
+        if (unprobed.Count > config.MaxItemsPerRun)
+        {
+            _logger.LogInformation(
+                "Catch-up: {Count} new STRM items, probing the first {Max}; the scheduled task picks up the rest",
+                unprobed.Count,
+                config.MaxItemsPerRun);
+            unprobed = unprobed.Take(config.MaxItemsPerRun).ToList();
+        }
+
+        _logger.LogInformation("Catch-up: probing {Count} new STRM items", unprobed.Count);
 
         var progress = new Progress<double>();
         var token = _stoppingCts?.Token ?? CancellationToken.None;
 
-        var result = await _probeService.ProbeBatchAsync(
-            unprobed,
-            config.ProbeParallelism,
-            config.ProbeTimeoutSeconds,
-            config.ProbeCooldownMs,
-            progress,
-            token).ConfigureAwait(false);
+        var options = new ProbeBatchOptions
+        {
+            Parallelism = config.ProbeParallelism,
+            TimeoutSeconds = config.ProbeTimeoutSeconds,
+            CooldownMs = config.ProbeCooldownMs,
+            MaxConsecutiveFailures = config.MaxConsecutiveFailures,
+            BeforeEachAsync = config.PauseWhileStrmPlaying ? _playbackGate.WaitUntilNoStrmPlayingAsync : null,
+        };
 
-        if (config.DeleteFailedStrms && result.FailedItems.Count > 0)
+        var result = await _probeService.ProbeBatchAsync(unprobed, options, progress, token).ConfigureAwait(false);
+
+        if (result.StoppedOnFailures && config.DeleteFailedStrms)
+        {
+            _logger.LogWarning("Catch-up: stopped on consecutive failures; no STRM files are deleted");
+        }
+        else if (config.DeleteFailedStrms && result.FailedItems.Count > 0)
         {
             var totalProbed = result.Probed + result.Failed;
             var failurePercent = (double)result.Failed / totalProbed * 100;

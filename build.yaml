@@ -1,8 +1,8 @@
 name: "JellySTRMprobe"
 guid: "b8f5e3a1-d4c7-4f2e-9a6b-1c8d3e5f7a9b"
-version: "1.2.0.0"
-targetAbi: "10.11.0.0"
-framework: "net9.0"
+version: "2.0.0.0"
+targetAbi: "12.0.0.0"
+framework: "net10.0"
 owner: "firestaerter3"
 overview: "Probe STRM files to extract media info (codec, resolution, duration, audio)"
 description: |
@@ -11,10 +11,14 @@ description: |
   plugin fills that gap.
 
   Features:
-  - Scheduled task to probe all unprobed STRM items
-  - Catch-up mode to auto-probe new STRM items as they are added
+  - Fast start: playback of an already probed STRM item skips Jellyfin's probe and
+    metadata refresh (about 10 seconds per start)
+  - Scheduled task to probe unprobed STRM items, with a cap per run and a stop after
+    consecutive failures
+  - Waits while someone plays a STRM item, for providers with one connection
+  - Catch-up mode to auto-probe new STRM items as they are added (off by default)
   - Configurable parallelism, timeout, and cooldown
-  - Per-library selection for targeted probing
+  - Per-library selection for probing and fast start
 
   This plugin is designed to work alongside Xtream Library or any other STRM
   file generator.
@@ -22,6 +26,14 @@ category: "General"
 artifacts:
   - "JellySTRMprobe.dll"
 changelog: |
+  ## v2.0.0.0
+  - Requires Jellyfin 12 (.NET 10). Jellyfin 10.11 users stay on 1.x.
+  - Fast start: an already probed STRM item starts without Jellyfin's probe and metadata
+    refresh. Items without a known video stream still get the normal probe.
+  - New limits: maximum items per run (500), stop after 10 failures in a row, wait while a
+    STRM item is playing.
+  - Safer defaults: one probe at a time, 2 s cooldown, catch-up off, no default schedule.
+  - Catch-up mode now respects the library selection.
   ## v1.2.0.0
   - Delete failed STRM files after probing (opt-in)
   - Configurable failure threshold to prevent mass deletion when provider is down

@@ -46,6 +46,21 @@ public interface IProbeService
         CancellationToken cancellationToken);
 
     /// <summary>
+    /// Probes a batch of items with the given options: concurrency, timeout, cooldown,
+    /// a stop after consecutive failures, and a callback awaited before each probe.
+    /// </summary>
+    /// <param name="items">The items to probe.</param>
+    /// <param name="options">The batch options.</param>
+    /// <param name="progress">Progress reporter (0-100).</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>A <see cref="ProbeResult"/> with counts and failed items.</returns>
+    Task<ProbeResult> ProbeBatchAsync(
+        IReadOnlyList<BaseItem> items,
+        ProbeBatchOptions options,
+        IProgress<double> progress,
+        CancellationToken cancellationToken);
+
+    /// <summary>
     /// Deletes the STRM files on disk for the given items.
     /// Only deletes files with a .strm extension (safety check).
     /// Does not remove items from the Jellyfin database — the next library scan handles that.
