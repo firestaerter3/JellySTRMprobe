@@ -7,27 +7,41 @@ using FluentAssertions;
 using JellySTRMprobe.Service;
 using JellySTRMprobe.Tasks;
 using MediaBrowser.Controller.Entities;
-using MediaBrowser.Model.Tasks;
 using Microsoft.Extensions.Logging;
 using Moq;
 using Xunit;
 
 namespace JellySTRMprobe.Tests.Tasks;
 
+[Collection("PluginInstance")]
 public class ProbeStrmTaskTests
 {
     private readonly Mock<IProbeService> _mockProbeService;
+    private readonly Mock<IPlaybackGate> _mockPlaybackGate;
     private readonly Mock<ILogger<ProbeStrmTask>> _mockLogger;
     private readonly ProbeStrmTask _task;
 
     public ProbeStrmTaskTests()
     {
         _mockProbeService = new Mock<IProbeService>();
+        _mockPlaybackGate = new Mock<IPlaybackGate>();
         _mockLogger = new Mock<ILogger<ProbeStrmTask>>();
 
-        TestHelpers.EnsurePluginInstance();
+        TestHelpers.ResetConfiguration();
 
-        _task = new ProbeStrmTask(_mockProbeService.Object, _mockLogger.Object);
+        _task = new ProbeStrmTask(_mockProbeService.Object, _mockPlaybackGate.Object, _mockLogger.Object);
+    }
+
+    private void SetupBatch(Action<IReadOnlyList<BaseItem>, ProbeBatchOptions>? capture = null, ProbeResult? result = null)
+    {
+        _mockProbeService
+            .Setup(s => s.ProbeBatchAsync(
+                It.IsAny<IReadOnlyList<BaseItem>>(),
+                It.IsAny<ProbeBatchOptions>(),
+                It.IsAny<IProgress<double>>(),
+                It.IsAny<CancellationToken>()))
+            .Callback((IReadOnlyList<BaseItem> items, ProbeBatchOptions options, IProgress<double> _, CancellationToken _) => capture?.Invoke(items, options))
+            .ReturnsAsync(result ?? new ProbeResult());
     }
 
     [Fact]
@@ -42,13 +56,9 @@ public class ProbeStrmTaskTests
     }
 
     [Fact]
-    public void GetDefaultTriggers_ReturnsDailyAt4AM()
+    public void GetDefaultTriggers_ReturnsNone()
     {
-        var triggers = _task.GetDefaultTriggers().ToList();
-
-        triggers.Should().HaveCount(1);
-        triggers[0].Type.Should().Be(TaskTriggerInfoType.DailyTrigger);
-        triggers[0].TimeOfDayTicks.Should().Be(TimeSpan.FromHours(4).Ticks);
+        _task.GetDefaultTriggers().Should().BeEmpty();
     }
 
     [Fact]
@@ -59,89 +69,98 @@ public class ProbeStrmTaskTests
             .Returns(new List<BaseItem>());
 
         double? lastProgress = null;
-        var progress = new Progress<double>(v => lastProgress = v);
+        var progress = new SynchronousProgress(v => lastProgress = v);
 
         await _task.ExecuteAsync(progress, CancellationToken.None);
-
-        // Wait for async progress callback
-        await Task.Delay(100);
 
         lastProgress.Should().Be(100);
     }
 
     [Fact]
-    public async Task ExecuteAsync_WithItems_CallsProbeBatch()
+    public async Task ExecuteAsync_PassesConfigValues()
     {
-        var items = new List<BaseItem>
+        TestHelpers.ResetConfiguration(c =>
         {
-            TestHelpers.CreateTestItem("Movie 1"),
-            TestHelpers.CreateTestItem("Movie 2"),
-            TestHelpers.CreateTestItem("Movie 3"),
-        };
+            c.ProbeParallelism = 3;
+            c.ProbeTimeoutSeconds = 120;
+            c.ProbeCooldownMs = 500;
+            c.MaxConsecutiveFailures = 7;
+            c.PauseWhileStrmPlaying = true;
+        });
 
         _mockProbeService
             .Setup(s => s.GetUnprobedItems(It.IsAny<Guid[]>()))
-            .Returns(items);
+            .Returns(new List<BaseItem> { TestHelpers.CreateTestItem("Movie 1", "/m/1.strm") });
 
-        _mockProbeService
-            .Setup(s => s.ProbeBatchAsync(
-                It.IsAny<IReadOnlyList<BaseItem>>(),
-                It.IsAny<int>(),
-                It.IsAny<int>(),
-                It.IsAny<int>(),
-                It.IsAny<IProgress<double>>(),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ProbeResult { Probed = 3, Failed = 0 });
+        ProbeBatchOptions? seen = null;
+        SetupBatch((_, options) => seen = options, new ProbeResult { Probed = 1 });
 
-        var progress = new Progress<double>();
+        await _task.ExecuteAsync(new SynchronousProgress(_ => { }), CancellationToken.None);
 
-        await _task.ExecuteAsync(progress, CancellationToken.None);
-
-        _mockProbeService.Verify(s => s.ProbeBatchAsync(
-            It.Is<IReadOnlyList<BaseItem>>(list => list.Count == 3),
-            It.IsAny<int>(),
-            It.IsAny<int>(),
-            It.IsAny<int>(),
-            It.IsAny<IProgress<double>>(),
-            It.IsAny<CancellationToken>()), Times.Once);
+        seen.Should().NotBeNull();
+        seen!.Parallelism.Should().Be(3);
+        seen.TimeoutSeconds.Should().Be(120);
+        seen.CooldownMs.Should().Be(500);
+        seen.MaxConsecutiveFailures.Should().Be(7);
+        seen.BeforeEachAsync.Should().NotBeNull();
     }
 
     [Fact]
-    public async Task ExecuteAsync_PassesConfigValues()
+    public async Task ExecuteAsync_WithoutPause_PassesNoWaitCallback()
     {
-        Plugin.Instance.Configuration.ProbeParallelism = 10;
-        Plugin.Instance.Configuration.ProbeTimeoutSeconds = 120;
-        Plugin.Instance.Configuration.ProbeCooldownMs = 500;
+        TestHelpers.ResetConfiguration(c => c.PauseWhileStrmPlaying = false);
 
-        var items = new List<BaseItem>
-        {
-            TestHelpers.CreateTestItem("Movie 1"),
-        };
+        _mockProbeService
+            .Setup(s => s.GetUnprobedItems(It.IsAny<Guid[]>()))
+            .Returns(new List<BaseItem> { TestHelpers.CreateTestItem("Movie 1", "/m/1.strm") });
 
+        ProbeBatchOptions? seen = null;
+        SetupBatch((_, options) => seen = options);
+
+        await _task.ExecuteAsync(new SynchronousProgress(_ => { }), CancellationToken.None);
+
+        seen!.BeforeEachAsync.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ProbesAtMostMaxItemsPerRun()
+    {
+        TestHelpers.ResetConfiguration(c => c.MaxItemsPerRun = 2);
+
+        var items = Enumerable.Range(1, 5)
+            .Select(i => TestHelpers.CreateTestItem("Movie " + i, "/m/" + i + ".strm"))
+            .ToList<BaseItem>();
         _mockProbeService
             .Setup(s => s.GetUnprobedItems(It.IsAny<Guid[]>()))
             .Returns(items);
 
+        IReadOnlyList<BaseItem>? probed = null;
+        SetupBatch((list, _) => probed = list);
+
+        await _task.ExecuteAsync(new SynchronousProgress(_ => { }), CancellationToken.None);
+
+        probed.Should().NotBeNull();
+        probed!.Should().HaveCount(2);
+        probed.Should().Equal(items.Take(2));
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_StoppedOnFailures_DeletesNothing()
+    {
+        TestHelpers.ResetConfiguration(c =>
+        {
+            c.DeleteFailedStrms = true;
+            c.DeleteFailureThreshold = 100;
+        });
+
+        var item = TestHelpers.CreateTestItem("Movie 1", "/m/1.strm");
         _mockProbeService
-            .Setup(s => s.ProbeBatchAsync(
-                It.IsAny<IReadOnlyList<BaseItem>>(),
-                It.IsAny<int>(),
-                It.IsAny<int>(),
-                It.IsAny<int>(),
-                It.IsAny<IProgress<double>>(),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ProbeResult { Probed = 1, Failed = 0 });
+            .Setup(s => s.GetUnprobedItems(It.IsAny<Guid[]>()))
+            .Returns(new List<BaseItem> { item });
+        SetupBatch(result: new ProbeResult { Failed = 1, FailedItems = new[] { item }, StoppedOnFailures = true });
 
-        var progress = new Progress<double>();
+        await _task.ExecuteAsync(new SynchronousProgress(_ => { }), CancellationToken.None);
 
-        await _task.ExecuteAsync(progress, CancellationToken.None);
-
-        _mockProbeService.Verify(s => s.ProbeBatchAsync(
-            It.IsAny<IReadOnlyList<BaseItem>>(),
-            10,
-            120,
-            500,
-            It.IsAny<IProgress<double>>(),
-            It.IsAny<CancellationToken>()), Times.Once);
+        _mockProbeService.Verify(s => s.DeleteStrmFiles(It.IsAny<IReadOnlyList<BaseItem>>()), Times.Never);
     }
 }

@@ -599,4 +599,145 @@ public class ProbeServiceTests
             Directory.Delete(tempDir, true);
         }
     }
+
+    // =====================
+    // ProbeBatchAsync with options
+    // =====================
+
+    private void SetupRefreshFailsFor(Func<BaseItem, bool> fails)
+    {
+        _mockProviderManager
+            .Setup(p => p.RefreshSingleItem(
+                It.IsAny<BaseItem>(),
+                It.IsAny<MetadataRefreshOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Returns((BaseItem item, MetadataRefreshOptions _, CancellationToken _) =>
+                fails(item)
+                    ? throw new System.Net.Http.HttpRequestException("upstream down")
+                    : Task.FromResult(ItemUpdateType.None));
+    }
+
+    [Fact]
+    public async Task ProbeBatchAsync_StopsAfterConsecutiveFailures()
+    {
+        var items = new List<BaseItem>();
+        for (var i = 0; i < 20; i++)
+        {
+            items.Add(CreateMockItem("Item " + i, "/media/" + i + ".strm"));
+        }
+
+        SetupRefreshFailsFor(_ => true);
+
+        var result = await _probeService.ProbeBatchAsync(
+            items,
+            new ProbeBatchOptions { Parallelism = 1, TimeoutSeconds = 60, MaxConsecutiveFailures = 3 },
+            new Progress<double>(),
+            CancellationToken.None);
+
+        result.StoppedOnFailures.Should().BeTrue();
+        result.Failed.Should().Be(3);
+        result.Probed.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task ProbeBatchAsync_SuccessResetsTheFailureCount()
+    {
+        // Pattern F F S F F S ...: never three failures in a row.
+        var items = new List<BaseItem>();
+        for (var i = 0; i < 12; i++)
+        {
+            items.Add(CreateMockItem(i % 3 == 2 ? "Good" : "Bad", "/media/" + i + ".strm"));
+        }
+
+        SetupRefreshFailsFor(item => item.Name == "Bad");
+
+        var result = await _probeService.ProbeBatchAsync(
+            items,
+            new ProbeBatchOptions { Parallelism = 1, TimeoutSeconds = 60, MaxConsecutiveFailures = 3 },
+            new Progress<double>(),
+            CancellationToken.None);
+
+        result.StoppedOnFailures.Should().BeFalse();
+        result.Probed.Should().Be(4);
+        result.Failed.Should().Be(8);
+    }
+
+    [Fact]
+    public async Task ProbeBatchAsync_ZeroMaxFailures_NeverStops()
+    {
+        var items = new List<BaseItem>();
+        for (var i = 0; i < 5; i++)
+        {
+            items.Add(CreateMockItem("Item " + i, "/media/" + i + ".strm"));
+        }
+
+        SetupRefreshFailsFor(_ => true);
+
+        var result = await _probeService.ProbeBatchAsync(
+            items,
+            new ProbeBatchOptions { Parallelism = 1, TimeoutSeconds = 60, MaxConsecutiveFailures = 0 },
+            new Progress<double>(),
+            CancellationToken.None);
+
+        result.StoppedOnFailures.Should().BeFalse();
+        result.Failed.Should().Be(5);
+    }
+
+    [Fact]
+    public async Task ProbeBatchAsync_AwaitsBeforeEachForEveryItem()
+    {
+        var items = new List<BaseItem>
+        {
+            CreateMockItem("A", "/media/a.strm"),
+            CreateMockItem("B", "/media/b.strm"),
+        };
+        SetupRefreshSuccess();
+        var calls = 0;
+
+        var result = await _probeService.ProbeBatchAsync(
+            items,
+            new ProbeBatchOptions
+            {
+                Parallelism = 1,
+                TimeoutSeconds = 60,
+                BeforeEachAsync = _ =>
+                {
+                    Interlocked.Increment(ref calls);
+                    return Task.CompletedTask;
+                },
+            },
+            new Progress<double>(),
+            CancellationToken.None);
+
+        calls.Should().Be(2);
+        result.Probed.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task ProbeBatchAsync_CallerCancellationDuringWait_Throws()
+    {
+        var items = new List<BaseItem> { CreateMockItem("A", "/media/a.strm") };
+        SetupRefreshSuccess();
+        using var cts = new CancellationTokenSource();
+
+        var act = async () => await _probeService.ProbeBatchAsync(
+            items,
+            new ProbeBatchOptions
+            {
+                TimeoutSeconds = 60,
+                BeforeEachAsync = async ct =>
+                {
+                    cts.Cancel();
+                    await Task.Delay(Timeout.Infinite, ct);
+                },
+            },
+            new Progress<double>(),
+            cts.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+        _mockProviderManager.Verify(
+            p => p.RefreshSingleItem(It.IsAny<BaseItem>(), It.IsAny<MetadataRefreshOptions>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
 }
+
