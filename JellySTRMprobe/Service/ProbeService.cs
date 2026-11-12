@@ -149,6 +149,7 @@ public class ProbeService : IProbeService
         var processed = 0;
         var consecutiveFailures = 0;
         var stoppedOnFailures = false;
+        var counterLock = new object();
         var failedItems = new ConcurrentBag<BaseItem>();
         var directoryService = new DirectoryService(_fileSystem);
 
@@ -172,30 +173,39 @@ public class ProbeService : IProbeService
 
                     var success = await ProbeItemCoreAsync(item, options.TimeoutSeconds, directoryService, ct).ConfigureAwait(false);
 
-                    if (success)
+                    // Count and check under one lock, so "in a row" follows the order in which
+                    // probes finish, also when several run at the same time.
+                    var stopNow = false;
+                    lock (counterLock)
                     {
-                        Interlocked.Increment(ref probed);
-                        Interlocked.Exchange(ref consecutiveFailures, 0);
-                    }
-                    else
-                    {
-                        Interlocked.Increment(ref failed);
-                        failedItems.Add(item);
-                        var inARow = Interlocked.Increment(ref consecutiveFailures);
-                        if (options.MaxConsecutiveFailures > 0 && inARow >= options.MaxConsecutiveFailures)
+                        if (success)
                         {
-                            if (!Volatile.Read(ref stoppedOnFailures))
-                            {
-                                Volatile.Write(ref stoppedOnFailures, true);
-                                _logger.LogWarning(
-                                    "Stopping probe run after {Count} failed probes in a row; the upstream server may be down",
-                                    inARow);
-                            }
-
-#pragma warning disable CA1849 // CancelAsync causes BadImageFormatException in Jellyfin's dispose pipeline
-                            stopCts.Cancel();
-#pragma warning restore CA1849
+                            probed++;
+                            consecutiveFailures = 0;
                         }
+                        else
+                        {
+                            failed++;
+                            failedItems.Add(item);
+                            consecutiveFailures++;
+                            if (options.MaxConsecutiveFailures > 0
+                                && consecutiveFailures >= options.MaxConsecutiveFailures
+                                && !stoppedOnFailures)
+                            {
+                                stoppedOnFailures = true;
+                                stopNow = true;
+                            }
+                        }
+                    }
+
+                    if (stopNow)
+                    {
+                        _logger.LogWarning(
+                            "Stopping probe run after {Count} failed probes in a row; the upstream server may be down",
+                            options.MaxConsecutiveFailures);
+#pragma warning disable CA1849 // CancelAsync causes BadImageFormatException in Jellyfin's dispose pipeline
+                        stopCts.Cancel();
+#pragma warning restore CA1849
                     }
 
                     var current = Interlocked.Increment(ref processed);
@@ -207,24 +217,34 @@ public class ProbeService : IProbeService
                     }
                 }).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && Volatile.Read(ref stoppedOnFailures))
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && stoppedOnFailures)
         {
             // Stopped by the consecutive-failure limit, not by the caller.
         }
 
+        int probedTotal;
+        int failedTotal;
+        bool stopped;
+        lock (counterLock)
+        {
+            probedTotal = probed;
+            failedTotal = failed;
+            stopped = stoppedOnFailures;
+        }
+
         _logger.LogInformation(
             "Probe complete: {Probed} succeeded, {Failed} failed out of {Total}{Stopped}",
-            probed,
-            failed,
+            probedTotal,
+            failedTotal,
             items.Count,
-            stoppedOnFailures ? " (stopped early on consecutive failures)" : string.Empty);
+            stopped ? " (stopped early on consecutive failures)" : string.Empty);
 
         return new ProbeResult
         {
-            Probed = probed,
-            Failed = failed,
+            Probed = probedTotal,
+            Failed = failedTotal,
             FailedItems = failedItems.ToArray(),
-            StoppedOnFailures = stoppedOnFailures,
+            StoppedOnFailures = stopped,
         };
     }
 
