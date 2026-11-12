@@ -25,6 +25,10 @@ public class CatchUpEntryPoint : IHostedService, IDisposable
     private readonly ILogger<CatchUpEntryPoint> _logger;
     private readonly ConcurrentQueue<BaseItem> _pendingItems = new();
 
+    // One batch at a time: the timer can fire again while a long batch runs, and two
+    // batches side by side would double the connections to the upstream server.
+    private readonly SemaphoreSlim _batchLock = new(1, 1);
+
     private CancellationTokenSource? _stoppingCts;
     private Timer? _debounceTimer;
     private bool _disposed;
@@ -110,6 +114,25 @@ public class CatchUpEntryPoint : IHostedService, IDisposable
     {
         try
         {
+            await RunBatchAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            // Nothing may escape an async void callback: it would take the server down.
+            _logger.LogError(ex, "Error in catch-up timer callback");
+        }
+    }
+
+    private async Task RunBatchAsync()
+    {
+        if (_disposed || !await _batchLock.WaitAsync(0).ConfigureAwait(false))
+        {
+            // Disposed, or a batch is running; that batch re-arms the timer for what is still queued.
+            return;
+        }
+
+        try
+        {
             await ProcessQueueAsync().ConfigureAwait(false);
         }
         catch (OperationCanceledException)
@@ -119,6 +142,17 @@ public class CatchUpEntryPoint : IHostedService, IDisposable
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error processing catch-up queue");
+        }
+        finally
+        {
+            if (!_disposed)
+            {
+                _batchLock.Release();
+                if (!_pendingItems.IsEmpty && _stoppingCts is { IsCancellationRequested: false })
+                {
+                    _debounceTimer?.Change(DebounceDelay, Timeout.InfiniteTimeSpan);
+                }
+            }
         }
     }
 
@@ -152,10 +186,18 @@ public class CatchUpEntryPoint : IHostedService, IDisposable
 
         if (unprobed.Count > config.MaxItemsPerRun)
         {
+            // Put the rest back in the queue; it is processed as the next batch once this one is done.
+            var rest = unprobed.Skip(config.MaxItemsPerRun).ToList();
+            foreach (var item in rest)
+            {
+                _pendingItems.Enqueue(item);
+            }
+
             _logger.LogInformation(
-                "Catch-up: {Count} new STRM items, probing the first {Max}; the scheduled task picks up the rest",
+                "Catch-up: {Count} new STRM items, probing {Max} now and {Rest} in the next batch",
                 unprobed.Count,
-                config.MaxItemsPerRun);
+                config.MaxItemsPerRun,
+                rest.Count);
             unprobed = unprobed.Take(config.MaxItemsPerRun).ToList();
         }
 
@@ -224,6 +266,7 @@ public class CatchUpEntryPoint : IHostedService, IDisposable
             _stoppingCts?.Cancel();
             _stoppingCts?.Dispose();
             _debounceTimer?.Dispose();
+            _batchLock.Dispose();
         }
 
         _disposed = true;
