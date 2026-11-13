@@ -17,6 +17,9 @@ public class PluginConfigurationTests
         config.ProbeTimeoutSeconds.Should().Be(60);
         config.ProbeCooldownMs.Should().Be(2000);
         config.MaxItemsPerRun.Should().Be(500);
+        config.ProbeCooldownJitterMs.Should().Be(0);
+        config.ShuffleOrder.Should().BeTrue();
+        config.StartDelayMaxMinutes.Should().Be(0);
         config.MaxConsecutiveFailures.Should().Be(10);
         config.PauseWhileStrmPlaying.Should().BeTrue();
         config.DeleteFailedStrms.Should().BeFalse();
