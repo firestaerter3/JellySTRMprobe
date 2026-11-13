@@ -164,6 +164,7 @@ public class ProbeStrmTask : IScheduledTask, IConfigurableScheduledTask
             TimeoutSeconds = config.ProbeTimeoutSeconds,
             CooldownMs = config.ProbeCooldownMs,
             CooldownJitterMs = config.ProbeCooldownJitterMs,
+            ProbeScope = config.EnableStreamCache ? item => _streamCache.BeginProbe(item.Id) : null,
             MaxConsecutiveFailures = config.MaxConsecutiveFailures,
             BeforeEachAsync = config.PauseWhileStrmPlaying ? _playbackGate.WaitUntilNoStrmPlayingAsync : null,
         };

@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -25,7 +24,7 @@ public class StreamCacheStore
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = false };
 
-    private readonly ConcurrentDictionary<string, object> _locks = new(StringComparer.Ordinal);
+    private readonly object[] _locks = Enumerable.Range(0, 64).Select(_ => new object()).ToArray();
     private readonly Func<string> _directory;
     private readonly ILogger _logger;
 
@@ -124,12 +123,22 @@ public class StreamCacheStore
 
         // One writer per file at a time, and a unique temporary name, so two updates of the
         // same item never move each other's half-written file into place.
-        lock (_locks.GetOrAdd(file, _ => new object()))
+        lock (_locks[(StringComparer.Ordinal.GetHashCode(file) & int.MaxValue) % _locks.Length])
         {
             Directory.CreateDirectory(Path.GetDirectoryName(file)!);
             var temp = file + "." + Guid.NewGuid().ToString("N") + ".tmp";
-            File.WriteAllText(temp, JsonSerializer.Serialize(entry, JsonOptions));
-            File.Move(temp, file, true);
+            try
+            {
+                File.WriteAllText(temp, JsonSerializer.Serialize(entry, JsonOptions));
+                File.Move(temp, file, true);
+            }
+            finally
+            {
+                if (File.Exists(temp))
+                {
+                    File.Delete(temp);
+                }
+            }
         }
     }
 

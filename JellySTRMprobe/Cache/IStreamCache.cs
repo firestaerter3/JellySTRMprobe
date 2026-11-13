@@ -1,3 +1,4 @@
+using System;
 using System.Threading;
 using System.Threading.Tasks;
 using MediaBrowser.Controller.Entities;
@@ -31,6 +32,15 @@ public interface IStreamCache
     /// <param name="item">The item.</param>
     /// <returns><c>true</c> when the next start should probe for real.</returns>
     bool NeedsVerification(BaseItem item);
+
+    /// <summary>
+    /// Registers that a real probe of the item is about to run, until the returned handle is
+    /// disposed. A restore never writes while such a probe is registered, and a probe never
+    /// registers while a restore is writing, so a fresh probe result is never overwritten.
+    /// </summary>
+    /// <param name="itemId">The item id.</param>
+    /// <returns>A handle that ends the registration.</returns>
+    IDisposable BeginProbe(Guid itemId);
 
     /// <summary>
     /// Records that a real probe confirmed the item's streams.
