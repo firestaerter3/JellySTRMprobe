@@ -53,16 +53,6 @@ public class ProbeStrmTask : IScheduledTask, IConfigurableScheduledTask
     /// <inheritdoc />
     public bool IsLogged => true;
 
-    /// <inheritdoc />
-    /// <remarks>
-    /// No trigger by default: every probe opens a connection to the upstream server, so when and
-    /// how long the task runs is left to the administrator (Dashboard, Scheduled Tasks).
-    /// </remarks>
-    public IEnumerable<TaskTriggerInfo> GetDefaultTriggers()
-    {
-        return Array.Empty<TaskTriggerInfo>();
-    }
-
     /// <summary>
     /// Gets or sets the delay used for the random start delay. Replaceable in tests.
     /// </summary>
@@ -72,6 +62,16 @@ public class ProbeStrmTask : IScheduledTask, IConfigurableScheduledTask
     /// Gets or sets the random source, returning an integer in [min, max). Replaceable in tests.
     /// </summary>
     internal Func<int, int, int> NextInt { get; set; } = Random.Shared.Next;
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// No trigger by default: every probe opens a connection to the upstream server, so when and
+    /// how long the task runs is left to the administrator (Dashboard, Scheduled Tasks).
+    /// </remarks>
+    public IEnumerable<TaskTriggerInfo> GetDefaultTriggers()
+    {
+        return Array.Empty<TaskTriggerInfo>();
+    }
 
     private static void Shuffle(BaseItem[] items) => Random.Shared.Shuffle(items);
 
