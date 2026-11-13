@@ -65,6 +65,67 @@ public class PluginConfiguration : BasePluginConfiguration
     public bool ShuffleOrder { get; set; } = true;
 
     /// <summary>
+    /// Gets or sets a value indicating whether the scheduled task probes the items most likely to be
+    /// watched first: preferred items, then high rating and recent release, with randomness inside
+    /// score bands (see <see cref="Ordering.PriorityOrder"/>). When off, <see cref="ShuffleOrder"/> decides.
+    /// </summary>
+    public bool PrioritizeOrder { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets a comma-separated list of original languages (ISO codes as Jellyfin stores them,
+    /// for example <c>en</c> or <c>de</c>) whose items go first. Empty means no language preference.
+    /// </summary>
+    public string PriorityLanguages { get; set; } = "en";
+
+    /// <summary>
+    /// Gets or sets a comma-separated list of production countries (for example <c>Germany</c>)
+    /// whose items go first. Matches when a production location contains the text. Empty by default.
+    /// </summary>
+    public string PriorityCountries { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets a comma-separated list of tags or genres whose items go first. Empty by default.
+    /// </summary>
+    public string PriorityTags { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets a comma-separated list of title prefixes whose items go first. Empty by default.
+    /// </summary>
+    public string PriorityTitlePrefixes { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets the weight of the community rating in the score (0 ignores the rating).
+    /// </summary>
+    public double RatingWeight { get; set; } = 1;
+
+    /// <summary>
+    /// Gets or sets the weight of recency in the score (0 ignores release year and date added).
+    /// </summary>
+    public double RecencyWeight { get; set; } = 3;
+
+    /// <summary>
+    /// Gets or sets the rating under which items go last (items without a rating are not affected). 0 means off.
+    /// </summary>
+    public double MinimumRating { get; set; }
+
+    /// <summary>
+    /// Gets or sets the width in score points of the bands inside which the order is random. 0 gives a strict order.
+    /// </summary>
+    public double OrderRandomnessBand { get; set; } = 1;
+
+    /// <summary>
+    /// Gets or sets a value indicating whether the stream information of probed STRM items is copied to a
+    /// cache outside Jellyfin's database and put back, without a probe, when an item loses it.
+    /// </summary>
+    public bool EnableStreamCache { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets a value indicating whether an item whose streams came from the cache gets one real
+    /// probe on its next start, in case the upstream file behind the same title has changed.
+    /// </summary>
+    public bool VerifyAfterRestore { get; set; } = true;
+
+    /// <summary>
     /// Gets or sets the largest random delay in minutes before a scheduled run starts probing,
     /// so runs do not start at the same minute every night. The delay counts towards the
     /// trigger's maximum run time. 0 means no delay.
@@ -121,6 +182,14 @@ public class PluginConfiguration : BasePluginConfiguration
         ProbeCooldownMs = Math.Clamp(ProbeCooldownMs, 0, 60000);
         ProbeCooldownJitterMs = Math.Clamp(ProbeCooldownJitterMs, 0, 300000);
         StartDelayMaxMinutes = Math.Clamp(StartDelayMaxMinutes, 0, 240);
+        RatingWeight = Math.Clamp(RatingWeight, 0, 10);
+        RecencyWeight = Math.Clamp(RecencyWeight, 0, 50);
+        MinimumRating = Math.Clamp(MinimumRating, 0, 10);
+        OrderRandomnessBand = Math.Clamp(OrderRandomnessBand, 0, 100);
+        PriorityLanguages ??= string.Empty;
+        PriorityCountries ??= string.Empty;
+        PriorityTags ??= string.Empty;
+        PriorityTitlePrefixes ??= string.Empty;
         MaxItemsPerRun = Math.Clamp(MaxItemsPerRun, 1, 1000000);
         MaxConsecutiveFailures = Math.Clamp(MaxConsecutiveFailures, 1, 10000);
         DeleteFailureThreshold = Math.Clamp(DeleteFailureThreshold, 1, 100);

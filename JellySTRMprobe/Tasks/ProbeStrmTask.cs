@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using JellySTRMprobe.Cache;
+using JellySTRMprobe.Ordering;
 using JellySTRMprobe.Service;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Model.Tasks;
@@ -17,6 +19,7 @@ public class ProbeStrmTask : IScheduledTask, IConfigurableScheduledTask
 {
     private readonly IProbeService _probeService;
     private readonly IPlaybackGate _playbackGate;
+    private readonly IStreamCache _streamCache;
     private readonly ILogger<ProbeStrmTask> _logger;
 
     /// <summary>
@@ -24,11 +27,13 @@ public class ProbeStrmTask : IScheduledTask, IConfigurableScheduledTask
     /// </summary>
     /// <param name="probeService">Instance of the <see cref="IProbeService"/>.</param>
     /// <param name="playbackGate">Instance of the <see cref="IPlaybackGate"/>.</param>
+    /// <param name="streamCache">Instance of the <see cref="IStreamCache"/>.</param>
     /// <param name="logger">Instance of the <see cref="ILogger{ProbeStrmTask}"/>.</param>
-    public ProbeStrmTask(IProbeService probeService, IPlaybackGate playbackGate, ILogger<ProbeStrmTask> logger)
+    public ProbeStrmTask(IProbeService probeService, IPlaybackGate playbackGate, IStreamCache streamCache, ILogger<ProbeStrmTask> logger)
     {
         _probeService = probeService;
         _playbackGate = playbackGate;
+        _streamCache = streamCache;
         _logger = logger;
     }
 
@@ -102,8 +107,31 @@ public class ProbeStrmTask : IScheduledTask, IConfigurableScheduledTask
 
         _logger.LogInformation("Starting STRM probe task");
 
-        var allItems = _probeService.GetUnprobedItems(config.SelectedLibraryIds);
-        var items = SelectItems(allItems, config.MaxItemsPerRun, config.ShuffleOrder ? Shuffle : null);
+        var unprobed = _probeService.GetUnprobedItems(config.SelectedLibraryIds);
+
+        // Items whose streams are in the cache come back without a request to the upstream server.
+        var allItems = new List<BaseItem>(unprobed.Count);
+        var restored = 0;
+        foreach (var item in unprobed)
+        {
+            if (config.EnableStreamCache && await _streamCache.TryRestoreAsync(item, cancellationToken).ConfigureAwait(false))
+            {
+                restored++;
+            }
+            else
+            {
+                allItems.Add(item);
+            }
+        }
+
+        if (restored > 0)
+        {
+            _logger.LogInformation("Restored {Count} items from the stream cache without probing", restored);
+        }
+
+        var items = config.PrioritizeOrder
+            ? SelectItems(PriorityOrder.Sort(allItems, config, DateTime.UtcNow, Random.Shared), config.MaxItemsPerRun, null)
+            : SelectItems(allItems, config.MaxItemsPerRun, config.ShuffleOrder ? Shuffle : null);
 
         if (items.Count == 0)
         {
@@ -116,7 +144,7 @@ public class ProbeStrmTask : IScheduledTask, IConfigurableScheduledTask
             "Probing {Count} of {Total} unprobed items ({Order} order) with parallelism={Parallelism}, timeout={Timeout}s, cooldown={Cooldown}ms + random 0-{Jitter}ms, stop after {MaxFailures} failures in a row",
             items.Count,
             allItems.Count,
-            config.ShuffleOrder ? "random" : "library",
+            config.PrioritizeOrder ? "priority" : config.ShuffleOrder ? "random" : "library",
             config.ProbeParallelism,
             config.ProbeTimeoutSeconds,
             config.ProbeCooldownMs,
@@ -136,6 +164,7 @@ public class ProbeStrmTask : IScheduledTask, IConfigurableScheduledTask
             TimeoutSeconds = config.ProbeTimeoutSeconds,
             CooldownMs = config.ProbeCooldownMs,
             CooldownJitterMs = config.ProbeCooldownJitterMs,
+            ProbeScope = config.EnableStreamCache ? item => _streamCache.BeginProbe(item.Id) : null,
             MaxConsecutiveFailures = config.MaxConsecutiveFailures,
             BeforeEachAsync = config.PauseWhileStrmPlaying ? _playbackGate.WaitUntilNoStrmPlayingAsync : null,
         };

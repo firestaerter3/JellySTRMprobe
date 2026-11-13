@@ -30,7 +30,7 @@ public class FastStartMediaSourceManagerTests
     [Fact]
     public void ShouldSkipProbe_ProbedStrm_Skips()
     {
-        var item = TestHelpers.CreateTestItemWithStreams("2 Guns", "/x/Movies/a.strm", Video, Audio);
+        var item = TestHelpers.CreateTestItemWithStreams("Movie A", "/x/Movies/a.strm", Video, Audio);
 
         FastStartMediaSourceManager.ShouldSkipProbe(item, true, Config(), AnyLibrary).Should().BeTrue();
     }
@@ -62,7 +62,7 @@ public class FastStartMediaSourceManagerTests
     [Fact]
     public void ShouldSkipProbe_Disabled_DoesNotSkip()
     {
-        var item = TestHelpers.CreateTestItemWithStreams("2 Guns", "/x/Movies/a.strm", Video, Audio);
+        var item = TestHelpers.CreateTestItemWithStreams("Movie A", "/x/Movies/a.strm", Video, Audio);
 
         FastStartMediaSourceManager.ShouldSkipProbe(item, true, Config(fastStart: false), AnyLibrary).Should().BeFalse();
     }
@@ -70,7 +70,7 @@ public class FastStartMediaSourceManagerTests
     [Fact]
     public void ShouldSkipProbe_NoConfiguration_DoesNotSkip()
     {
-        var item = TestHelpers.CreateTestItemWithStreams("2 Guns", "/x/Movies/a.strm", Video, Audio);
+        var item = TestHelpers.CreateTestItemWithStreams("Movie A", "/x/Movies/a.strm", Video, Audio);
 
         FastStartMediaSourceManager.ShouldSkipProbe(item, true, null, AnyLibrary).Should().BeFalse();
     }
@@ -78,7 +78,7 @@ public class FastStartMediaSourceManagerTests
     [Fact]
     public void ShouldSkipProbe_CallerAlreadyDisallowsProbe_ReturnsFalse()
     {
-        var item = TestHelpers.CreateTestItemWithStreams("2 Guns", "/x/Movies/a.strm", Video, Audio);
+        var item = TestHelpers.CreateTestItemWithStreams("Movie A", "/x/Movies/a.strm", Video, Audio);
 
         FastStartMediaSourceManager.ShouldSkipProbe(item, false, Config(), AnyLibrary).Should().BeFalse();
     }
@@ -86,7 +86,7 @@ public class FastStartMediaSourceManagerTests
     [Fact]
     public void ShouldSkipProbe_OutsideSelectedLibraries_DoesNotSkip()
     {
-        var item = TestHelpers.CreateTestItemWithStreams("2 Guns", "/x/Movies/a.strm", Video, Audio);
+        var item = TestHelpers.CreateTestItemWithStreams("Movie A", "/x/Movies/a.strm", Video, Audio);
 
         FastStartMediaSourceManager.ShouldSkipProbe(item, true, Config(), _ => false).Should().BeFalse();
     }
@@ -98,7 +98,7 @@ public class FastStartMediaSourceManagerTests
         inner.Setup(m => m.GetPlaybackMediaSources(It.IsAny<BaseItem>(), It.IsAny<User>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<MediaSourceInfo>());
         var sut = Create(inner.Object, Config());
-        var item = TestHelpers.CreateTestItemWithStreams("2 Guns", "/x/Movies/a.strm", Video, Audio);
+        var item = TestHelpers.CreateTestItemWithStreams("Movie A", "/x/Movies/a.strm", Video, Audio);
 
         await sut.GetPlaybackMediaSources(item, null!, true, true, CancellationToken.None);
 
@@ -180,7 +180,7 @@ public class FastStartMediaSourceManagerTests
     {
         var libraryId = Guid.NewGuid();
         var libraryManager = new Mock<ILibraryManager>();
-        var item = TestHelpers.CreateTestItem("2 Guns", "/x/Movies/a.strm");
+        var item = TestHelpers.CreateTestItem("Movie A", "/x/Movies/a.strm");
         libraryManager.Setup(l => l.GetCollectionFolders(item)).Returns(new List<Folder> { new Folder { Id = libraryId } });
 
         LibraryScope.IsInSelectedLibraries(libraryManager.Object, item, new[] { libraryId }).Should().BeTrue();
@@ -220,5 +220,54 @@ public class FastStartMediaSourceManagerTests
             new ServiceCollection().BuildServiceProvider(),
             NullLogger<FastStartMediaSourceManager>.Instance,
             () => config);
+    }
+
+    [Fact]
+    public void ShouldSkipProbe_RestoredButUnverified_DoesNotSkip()
+    {
+        var item = TestHelpers.CreateTestItemWithStreams("Movie A", "/x/Movies/a.strm", Video, Audio);
+
+        FastStartMediaSourceManager.ShouldSkipProbe(item, true, Config(), AnyLibrary, _ => true).Should().BeFalse();
+        FastStartMediaSourceManager.ShouldSkipProbe(item, true, Config(), AnyLibrary, _ => false).Should().BeTrue();
+    }
+
+    private static (FastStartMediaSourceManager Sut, Mock<IMediaSourceManager> Inner, Mock<JellySTRMprobe.Cache.IStreamCache> Cache) Verifying(bool probeSucceeds)
+    {
+        var inner = new Mock<IMediaSourceManager>();
+        inner.Setup(m => m.GetPlaybackMediaSources(It.IsAny<BaseItem>(), It.IsAny<User>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<MediaSourceInfo>());
+        var cache = new Mock<JellySTRMprobe.Cache.IStreamCache>();
+        cache.Setup(c => c.NeedsVerification(It.IsAny<BaseItem>())).Returns(true);
+        var probe = new Mock<IProbeService>();
+        probe.Setup(p => p.ProbeDirectAsync(It.IsAny<BaseItem>(), It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync(probeSucceeds);
+        var services = new ServiceCollection();
+        services.AddSingleton(cache.Object);
+        services.AddSingleton(probe.Object);
+        var sut = new FastStartMediaSourceManager(inner.Object, false, services.BuildServiceProvider(), NullLogger<FastStartMediaSourceManager>.Instance, () => Config());
+        return (sut, inner, cache);
+    }
+
+    [Fact]
+    public async Task RestoredItem_SuccessfulVerificationProbe_MarksVerifiedAndSkipsTheRefresh()
+    {
+        var (sut, inner, cache) = Verifying(probeSucceeds: true);
+        var item = TestHelpers.CreateTestItemWithStreams("Movie A", "/x/Movies/a.strm", Video, Audio);
+
+        await sut.GetPlaybackMediaSources(item, null!, true, true, CancellationToken.None);
+
+        cache.Verify(c => c.MarkVerified(item), Times.Once);
+        inner.Verify(m => m.GetPlaybackMediaSources(item, null!, false, true, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task RestoredItem_FailedVerificationProbe_KeepsTheFlagAndUsesJellyfinsProbe()
+    {
+        var (sut, inner, cache) = Verifying(probeSucceeds: false);
+        var item = TestHelpers.CreateTestItemWithStreams("Movie A", "/x/Movies/a.strm", Video, Audio);
+
+        await sut.GetPlaybackMediaSources(item, null!, true, true, CancellationToken.None);
+
+        cache.Verify(c => c.MarkVerified(It.IsAny<BaseItem>()), Times.Never);
+        inner.Verify(m => m.GetPlaybackMediaSources(item, null!, true, true, It.IsAny<CancellationToken>()), Times.Once);
     }
 }

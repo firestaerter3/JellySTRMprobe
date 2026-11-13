@@ -158,6 +158,73 @@
                     </div>
 
                     <div class="verticalSection">
+                        <h3 class="sectionTitle">Probe Order</h3>
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label class="emby-checkbox-label">
+                                <input is="emby-checkbox" type="checkbox" id="chkPrioritizeOrder" />
+                                <span>Probe the most likely watched items first</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">Preferred items first, then by rating and release year, with random order inside score bands. When off, the order is random or the library order (see Random order).</div>
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="txtPriorityLanguages">Preferred original languages</label>
+                            <input is="emby-input" type="text" id="txtPriorityLanguages" />
+                            <div class="fieldDescription">Comma-separated language codes as Jellyfin stores them, for example <code>en</code> or <code>de,fr</code>. Empty: no language preference.</div>
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="txtPriorityCountries">Preferred production countries</label>
+                            <input is="emby-input" type="text" id="txtPriorityCountries" />
+                            <div class="fieldDescription">Comma-separated; matches when a production country contains the text, for example <code>Germany</code>.</div>
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="txtPriorityTags">Preferred tags or genres</label>
+                            <input is="emby-input" type="text" id="txtPriorityTags" />
+                            <div class="fieldDescription">Comma-separated, exact match.</div>
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="txtPriorityTitlePrefixes">Preferred title prefixes</label>
+                            <input is="emby-input" type="text" id="txtPriorityTitlePrefixes" />
+                            <div class="fieldDescription">Comma-separated; matches the start of the title or original title.</div>
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="txtRatingWeight">Rating weight (0-10)</label>
+                            <input is="emby-input" type="number" id="txtRatingWeight" min="0" max="10" step="0.5" />
+                            <div class="fieldDescription">How much the community rating counts. 0 ignores it.</div>
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="txtRecencyWeight">Recency weight (0-50)</label>
+                            <input is="emby-input" type="number" id="txtRecencyWeight" min="0" max="50" step="0.5" />
+                            <div class="fieldDescription">How much a recent release (and an item added in the last 30 days) counts. 0 ignores it.</div>
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="txtMinimumRating">Minimum rating (0-10)</label>
+                            <input is="emby-input" type="number" id="txtMinimumRating" min="0" max="10" step="0.1" />
+                            <div class="fieldDescription">Items with a known rating under this go last. 0 turns it off.</div>
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="txtOrderRandomnessBand">Randomness band (score points)</label>
+                            <input is="emby-input" type="number" id="txtOrderRandomnessBand" min="0" max="100" step="0.5" />
+                            <div class="fieldDescription">Items within this many score points are probed in random order. 0 gives a strict order.</div>
+                        </div>
+                    </div>
+                    <div class="verticalSection">
+                        <h3 class="sectionTitle">Stream Cache</h3>
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label class="emby-checkbox-label">
+                                <input is="emby-checkbox" type="checkbox" id="chkEnableStreamCache" />
+                                <span>Keep a copy of probe results outside the Jellyfin database</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">When a STRM item is removed and recreated (for example after the source rebuilds its catalogue), its streams come back from this copy without a request to the upstream server.</div>
+                        </div>
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label class="emby-checkbox-label">
+                                <input is="emby-checkbox" type="checkbox" id="chkVerifyAfterRestore" />
+                                <span>Probe once more on the first start after a restore</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">In case the file behind the same title has changed upstream. Costs one normal probe per restored item that is actually played.</div>
+                        </div>
+                    </div>
+                    <div class="verticalSection">
                         <h3 class="sectionTitle">Post-Probe Actions</h3>
                         <div class="checkboxContainer checkboxContainer-withDescription">
                             <label class="emby-checkbox-label">

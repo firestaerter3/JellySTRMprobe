@@ -1,6 +1,7 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using MediaBrowser.Controller.Entities;
 
 namespace JellySTRMprobe.Service;
 
@@ -38,4 +39,10 @@ public class ProbeBatchOptions
     /// Gets a callback awaited before each probe, for example to wait until nobody is watching.
     /// </summary>
     public Func<CancellationToken, Task>? BeforeEachAsync { get; init; }
+
+    /// <summary>
+    /// Gets a callback that registers a probe of an item for its duration (see
+    /// <see cref="Cache.IStreamCache.BeginProbe"/>); the returned handle is disposed after the probe.
+    /// </summary>
+    public Func<BaseItem, IDisposable?>? ProbeScope { get; init; }
 }

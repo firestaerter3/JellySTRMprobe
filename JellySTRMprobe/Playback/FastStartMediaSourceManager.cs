@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Database.Implementations.Entities;
+using JellySTRMprobe.Cache;
 using JellySTRMprobe.Service;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
@@ -30,6 +31,7 @@ public sealed class FastStartMediaSourceManager : IMediaSourceManager, IDisposab
     private readonly ILogger<FastStartMediaSourceManager> _logger;
     private readonly Func<PluginConfiguration?> _getConfiguration;
     private ILibraryManager? _libraryManager;
+    private IStreamCache? _streamCache;
     private bool _disposed;
 
     /// <summary>
@@ -61,12 +63,14 @@ public sealed class FastStartMediaSourceManager : IMediaSourceManager, IDisposab
     /// <param name="allowMediaProbe">Whether the caller allows a probe.</param>
     /// <param name="config">The plugin configuration, or <c>null</c> when it is not available.</param>
     /// <param name="isInSelectedLibraries">Returns whether the item lies in a selected library.</param>
+    /// <param name="needsVerification">Returns whether the item's streams came from the cache and still need one real probe.</param>
     /// <returns><c>true</c> when the probe can be skipped.</returns>
     public static bool ShouldSkipProbe(
         BaseItem item,
         bool allowMediaProbe,
         PluginConfiguration? config,
-        Func<BaseItem, bool> isInSelectedLibraries)
+        Func<BaseItem, bool> isInSelectedLibraries,
+        Func<BaseItem, bool>? needsVerification = null)
     {
         ArgumentNullException.ThrowIfNull(item);
         ArgumentNullException.ThrowIfNull(isInSelectedLibraries);
@@ -84,16 +88,30 @@ public sealed class FastStartMediaSourceManager : IMediaSourceManager, IDisposab
             return false;
         }
 
-        return isInSelectedLibraries(item);
+        if (!isInSelectedLibraries(item))
+        {
+            return false;
+        }
+
+        // Streams put back from the cache get one real probe first, in case the file behind the
+        // same title has changed upstream.
+        return needsVerification == null || !needsVerification(item);
     }
 
     /// <inheritdoc />
     public async Task<IReadOnlyList<MediaSourceInfo>> GetPlaybackMediaSources(BaseItem item, User user, bool allowMediaProbe, bool enablePathSubstitution, CancellationToken cancellationToken)
     {
         var skip = false;
+        var verify = false;
+        var config = _getConfiguration();
         try
         {
-            skip = ShouldSkipProbe(item, allowMediaProbe, _getConfiguration(), IsInSelectedLibraries);
+            skip = ShouldSkipProbe(item, allowMediaProbe, config, IsInSelectedLibraries);
+            if (skip && NeedsVerification(item))
+            {
+                skip = false;
+                verify = true;
+            }
         }
         catch (Exception ex)
         {
@@ -105,6 +123,16 @@ public sealed class FastStartMediaSourceManager : IMediaSourceManager, IDisposab
         {
             _logger.LogDebug("Fast start: skipping probe and refresh for {ItemName} ({ItemId})", item!.Name, item.Id);
             return await _inner.GetPlaybackMediaSources(item, user, false, enablePathSubstitution, cancellationToken).ConfigureAwait(false);
+        }
+
+        // A real probe is about to run (the verification probe, or Jellyfin's own): register it so
+        // a cache restore cannot overwrite its result.
+        using var registration = allowMediaProbe && LibraryScope.IsStrm(item) ? StreamCache()?.BeginProbe(item!.Id) : null;
+
+        if (verify && await TryVerifyAsync(item!, config!, cancellationToken).ConfigureAwait(false))
+        {
+            // The probe just ran for real; no need for Jellyfin's refresh on top of it.
+            return await _inner.GetPlaybackMediaSources(item!, user, false, enablePathSubstitution, cancellationToken).ConfigureAwait(false);
         }
 
         return await _inner.GetPlaybackMediaSources(item!, user, allowMediaProbe, enablePathSubstitution, cancellationToken).ConfigureAwait(false);
@@ -195,6 +223,43 @@ public sealed class FastStartMediaSourceManager : IMediaSourceManager, IDisposab
         }
 
         GC.SuppressFinalize(this);
+    }
+
+    private async Task<bool> TryVerifyAsync(BaseItem item, PluginConfiguration config, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var probeService = _serviceProvider.GetService<IProbeService>();
+            if (probeService == null
+                || !await probeService.ProbeDirectAsync(item, config.ProbeTimeoutSeconds, cancellationToken).ConfigureAwait(false)
+                || !item.GetMediaStreams().Any(s => s.Type == MediaStreamType.Video))
+            {
+                // No proof the file was read; keep the flag and let Jellyfin probe as usual.
+                return false;
+            }
+
+            StreamCache()?.MarkVerified(item);
+            return true;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Verification of restored streams failed for {ItemId}", item.Id);
+            return false;
+        }
+    }
+
+    private IStreamCache? StreamCache()
+    {
+        return _streamCache ??= _serviceProvider.GetService<IStreamCache>();
+    }
+
+    private bool NeedsVerification(BaseItem item)
+    {
+        return StreamCache()?.NeedsVerification(item) == true;
     }
 
     private bool IsInSelectedLibraries(BaseItem item)
