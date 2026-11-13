@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
+using JellySTRMprobe.Cache;
 using JellySTRMprobe.Service;
 using JellySTRMprobe.Tasks;
 using MediaBrowser.Controller.Entities;
@@ -18,6 +19,7 @@ public class ProbeStrmTaskTests
 {
     private readonly Mock<IProbeService> _mockProbeService;
     private readonly Mock<IPlaybackGate> _mockPlaybackGate;
+    private readonly Mock<IStreamCache> _mockStreamCache;
     private readonly Mock<ILogger<ProbeStrmTask>> _mockLogger;
     private readonly ProbeStrmTask _task;
 
@@ -25,11 +27,13 @@ public class ProbeStrmTaskTests
     {
         _mockProbeService = new Mock<IProbeService>();
         _mockPlaybackGate = new Mock<IPlaybackGate>();
+        _mockStreamCache = new Mock<IStreamCache>();
+        _mockStreamCache.Setup(c => c.TryRestoreAsync(It.IsAny<BaseItem>(), It.IsAny<CancellationToken>())).ReturnsAsync(false);
         _mockLogger = new Mock<ILogger<ProbeStrmTask>>();
 
         TestHelpers.ResetConfiguration();
 
-        _task = new ProbeStrmTask(_mockProbeService.Object, _mockPlaybackGate.Object, _mockLogger.Object);
+        _task = new ProbeStrmTask(_mockProbeService.Object, _mockPlaybackGate.Object, _mockStreamCache.Object, _mockLogger.Object);
     }
 
     private void SetupBatch(Action<IReadOnlyList<BaseItem>, ProbeBatchOptions>? capture = null, ProbeResult? result = null)
@@ -129,6 +133,7 @@ public class ProbeStrmTaskTests
         {
             c.MaxItemsPerRun = 2;
             c.ShuffleOrder = false;
+            c.PrioritizeOrder = false;
         });
 
         var items = Enumerable.Range(1, 5)
@@ -194,6 +199,7 @@ public class ProbeStrmTaskTests
         {
             c.MaxItemsPerRun = 3;
             c.ShuffleOrder = true;
+            c.PrioritizeOrder = false;
         });
         var items = Enumerable.Range(1, 10).Select(i => TestHelpers.CreateTestItem("M" + i, "/m/" + i + ".strm")).ToList<BaseItem>();
         _mockProbeService.Setup(s => s.GetUnprobedItems(It.IsAny<Guid[]>())).Returns(items);
@@ -280,4 +286,34 @@ public class ProbeStrmTaskTests
             s => s.ProbeBatchAsync(It.IsAny<IReadOnlyList<BaseItem>>(), It.IsAny<ProbeBatchOptions>(), It.IsAny<IProgress<double>>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
+
+    [Fact]
+    public async Task ExecuteAsync_CachedItemsAreRestoredNotProbed()
+    {
+        TestHelpers.ResetConfiguration();
+        var cached = TestHelpers.CreateTestItem("Cached", "/m/c.strm");
+        var other = TestHelpers.CreateTestItem("Other", "/m/o.strm");
+        _mockProbeService.Setup(s => s.GetUnprobedItems(It.IsAny<Guid[]>())).Returns(new List<BaseItem> { cached, other });
+        _mockStreamCache.Setup(c => c.TryRestoreAsync(cached, It.IsAny<CancellationToken>())).ReturnsAsync(true);
+        IReadOnlyList<BaseItem>? probed = null;
+        SetupBatch((list, _) => probed = list);
+
+        await _task.ExecuteAsync(new SynchronousProgress(_ => { }), CancellationToken.None);
+
+        probed.Should().Equal(other);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_CacheOff_DoesNotRestore()
+    {
+        TestHelpers.ResetConfiguration(c => c.EnableStreamCache = false);
+        var item = TestHelpers.CreateTestItem("M", "/m/1.strm");
+        _mockProbeService.Setup(s => s.GetUnprobedItems(It.IsAny<Guid[]>())).Returns(new List<BaseItem> { item });
+        SetupBatch();
+
+        await _task.ExecuteAsync(new SynchronousProgress(_ => { }), CancellationToken.None);
+
+        _mockStreamCache.Verify(c => c.TryRestoreAsync(It.IsAny<BaseItem>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
 }
+

@@ -1,6 +1,6 @@
 name: "JellySTRMprobe"
 guid: "b8f5e3a1-d4c7-4f2e-9a6b-1c8d3e5f7a9b"
-version: "2.0.1.0"
+version: "2.0.2.0"
 targetAbi: "12.0.0.0"
 framework: "net10.0"
 owner: "firestaerter3"
@@ -26,6 +26,13 @@ category: "General"
 artifacts:
   - "JellySTRMprobe.dll"
 changelog: |
+  ## v2.0.2.0
+  - Priority order: preferred items first (by original language, production country, tag or
+    title prefix), then by rating and release year, random inside score bands. All of it is
+    configurable; the default prefers English-language items.
+  - Stream cache: probe results are copied outside the Jellyfin database and put back, without
+    a request to the upstream server, when a STRM item is removed and recreated. The first start
+    after a restore probes once more (configurable).
   ## v2.0.1.0
   - Random extra pause after each probe (ProbeCooldownJitterMs, default 0).
   - Random order: each run probes a random selection of unprobed items (ShuffleOrder, default on).

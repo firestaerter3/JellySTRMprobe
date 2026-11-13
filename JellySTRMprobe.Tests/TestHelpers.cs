@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using MediaBrowser.Common.Configuration;
 using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.Serialization;
 using Moq;
@@ -67,6 +68,22 @@ internal static class TestHelpers
         mock.Object.Path = path;
         mock.Object.Id = Guid.NewGuid();
         return mock.Object;
+    }
+
+    /// <summary>
+    /// Creates a BaseItem mock (returned as the mock) whose stored streams are read from <paramref name="streams"/>,
+    /// and whose repository update does nothing.
+    /// </summary>
+    public static Mock<BaseItem> CreateMockItem(string name, string? path, List<MediaStream> streams)
+    {
+        var mock = new Mock<BaseItem>() { CallBase = true };
+        mock.Setup(m => m.GetMediaStreams()).Returns(() => streams);
+        mock.Setup(m => m.UpdateToRepositoryAsync(It.IsAny<ItemUpdateType>(), It.IsAny<System.Threading.CancellationToken>()))
+            .Returns(System.Threading.Tasks.Task.CompletedTask);
+        mock.Object.Name = name;
+        mock.Object.Path = path;
+        mock.Object.Id = Guid.NewGuid();
+        return mock;
     }
 
     /// <summary>
