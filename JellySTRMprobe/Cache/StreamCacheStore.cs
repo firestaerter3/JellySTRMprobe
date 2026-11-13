@@ -1,5 +1,8 @@
 using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -22,6 +25,7 @@ public class StreamCacheStore
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = false };
 
+    private readonly ConcurrentDictionary<string, object> _locks = new(StringComparer.Ordinal);
     private readonly Func<string> _directory;
     private readonly ILogger _logger;
 
@@ -50,7 +54,33 @@ public class StreamCacheStore
         }
 
         item.ProviderIds.TryGetValue(MetadataProvider.Tmdb.ToString(), out var tmdb);
-        return item.Path.ToUpperInvariant() + "|" + (tmdb ?? string.Empty);
+        // Ordinal, not case-folded: two paths that differ only in case are two files on Linux.
+        return item.Path + "|" + (tmdb ?? string.Empty);
+    }
+
+    /// <summary>
+    /// Builds a fingerprint of everything a restore would write, so a changed probe result is
+    /// never mistaken for an unchanged one.
+    /// </summary>
+    /// <param name="streams">The media streams.</param>
+    /// <param name="runTimeTicks">The run time.</param>
+    /// <param name="container">The container.</param>
+    /// <param name="totalBitrate">The total bitrate.</param>
+    /// <param name="width">The width.</param>
+    /// <param name="height">The height.</param>
+    /// <returns>A hex SHA-256 of the serialised values.</returns>
+    public static string Fingerprint(IReadOnlyList<MediaStream> streams, long? runTimeTicks, string? container, int? totalBitrate, int width, int height)
+    {
+        var payload = JsonSerializer.Serialize(new
+        {
+            Streams = streams.OrderBy(s => s.Index).ToList(),
+            RunTimeTicks = runTimeTicks,
+            Container = container,
+            TotalBitrate = totalBitrate,
+            Width = width,
+            Height = height,
+        });
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(payload)));
     }
 
     /// <summary>
@@ -92,10 +122,15 @@ public class StreamCacheStore
             return;
         }
 
-        Directory.CreateDirectory(Path.GetDirectoryName(file)!);
-        var temp = file + ".tmp";
-        File.WriteAllText(temp, JsonSerializer.Serialize(entry, JsonOptions));
-        File.Move(temp, file, true);
+        // One writer per file at a time, and a unique temporary name, so two updates of the
+        // same item never move each other's half-written file into place.
+        lock (_locks.GetOrAdd(file, _ => new object()))
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+            var temp = file + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            File.WriteAllText(temp, JsonSerializer.Serialize(entry, JsonOptions));
+            File.Move(temp, file, true);
+        }
     }
 
     private string? FileOf(BaseItem item)

@@ -231,23 +231,43 @@ public class FastStartMediaSourceManagerTests
         FastStartMediaSourceManager.ShouldSkipProbe(item, true, Config(), AnyLibrary, _ => false).Should().BeTrue();
     }
 
-    [Fact]
-    public async Task GetPlaybackMediaSources_RealProbe_MarksTheCacheEntryVerified()
+    private static (FastStartMediaSourceManager Sut, Mock<IMediaSourceManager> Inner, Mock<JellySTRMprobe.Cache.IStreamCache> Cache) Verifying(bool probeSucceeds)
     {
         var inner = new Mock<IMediaSourceManager>();
         inner.Setup(m => m.GetPlaybackMediaSources(It.IsAny<BaseItem>(), It.IsAny<User>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<MediaSourceInfo>());
         var cache = new Mock<JellySTRMprobe.Cache.IStreamCache>();
         cache.Setup(c => c.NeedsVerification(It.IsAny<BaseItem>())).Returns(true);
+        var probe = new Mock<IProbeService>();
+        probe.Setup(p => p.ProbeDirectAsync(It.IsAny<BaseItem>(), It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync(probeSucceeds);
         var services = new ServiceCollection();
         services.AddSingleton(cache.Object);
+        services.AddSingleton(probe.Object);
         var sut = new FastStartMediaSourceManager(inner.Object, false, services.BuildServiceProvider(), NullLogger<FastStartMediaSourceManager>.Instance, () => Config());
+        return (sut, inner, cache);
+    }
+
+    [Fact]
+    public async Task RestoredItem_SuccessfulVerificationProbe_MarksVerifiedAndSkipsTheRefresh()
+    {
+        var (sut, inner, cache) = Verifying(probeSucceeds: true);
         var item = TestHelpers.CreateTestItemWithStreams("Movie A", "/x/Movies/a.strm", Video, Audio);
 
         await sut.GetPlaybackMediaSources(item, null!, true, true, CancellationToken.None);
 
-        inner.Verify(m => m.GetPlaybackMediaSources(item, null!, true, true, It.IsAny<CancellationToken>()), Times.Once);
         cache.Verify(c => c.MarkVerified(item), Times.Once);
+        inner.Verify(m => m.GetPlaybackMediaSources(item, null!, false, true, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task RestoredItem_FailedVerificationProbe_KeepsTheFlagAndUsesJellyfinsProbe()
+    {
+        var (sut, inner, cache) = Verifying(probeSucceeds: false);
+        var item = TestHelpers.CreateTestItemWithStreams("Movie A", "/x/Movies/a.strm", Video, Audio);
+
+        await sut.GetPlaybackMediaSources(item, null!, true, true, CancellationToken.None);
+
+        cache.Verify(c => c.MarkVerified(It.IsAny<BaseItem>()), Times.Never);
+        inner.Verify(m => m.GetPlaybackMediaSources(item, null!, true, true, It.IsAny<CancellationToken>()), Times.Once);
     }
 }
-

@@ -102,14 +102,27 @@ public sealed class FastStartMediaSourceManager : IMediaSourceManager, IDisposab
     public async Task<IReadOnlyList<MediaSourceInfo>> GetPlaybackMediaSources(BaseItem item, User user, bool allowMediaProbe, bool enablePathSubstitution, CancellationToken cancellationToken)
     {
         var skip = false;
+        var verify = false;
+        var config = _getConfiguration();
         try
         {
-            skip = ShouldSkipProbe(item, allowMediaProbe, _getConfiguration(), IsInSelectedLibraries, NeedsVerification);
+            skip = ShouldSkipProbe(item, allowMediaProbe, config, IsInSelectedLibraries);
+            if (skip && NeedsVerification(item))
+            {
+                skip = false;
+                verify = true;
+            }
         }
         catch (Exception ex)
         {
             // Any doubt means Jellyfin's own behaviour: a slow start is better than no start.
             _logger.LogWarning(ex, "Fast start check failed for {ItemId}; using Jellyfin's normal probe", item?.Id);
+        }
+
+        if (verify && await TryVerifyAsync(item!, config!, cancellationToken).ConfigureAwait(false))
+        {
+            // The probe just ran for real; no need for Jellyfin's refresh on top of it.
+            skip = true;
         }
 
         if (skip)
@@ -118,21 +131,7 @@ public sealed class FastStartMediaSourceManager : IMediaSourceManager, IDisposab
             return await _inner.GetPlaybackMediaSources(item, user, false, enablePathSubstitution, cancellationToken).ConfigureAwait(false);
         }
 
-        var sources = await _inner.GetPlaybackMediaSources(item!, user, allowMediaProbe, enablePathSubstitution, cancellationToken).ConfigureAwait(false);
-        if (allowMediaProbe && LibraryScope.IsStrm(item))
-        {
-            // Jellyfin has just probed this STRM item for real; a restored entry is now confirmed.
-            try
-            {
-                StreamCache()?.MarkVerified(item!);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogDebug(ex, "Could not mark {ItemId} as verified in the stream cache", item?.Id);
-            }
-        }
-
-        return sources;
+        return await _inner.GetPlaybackMediaSources(item!, user, allowMediaProbe, enablePathSubstitution, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -220,6 +219,33 @@ public sealed class FastStartMediaSourceManager : IMediaSourceManager, IDisposab
         }
 
         GC.SuppressFinalize(this);
+    }
+
+    private async Task<bool> TryVerifyAsync(BaseItem item, PluginConfiguration config, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var probeService = _serviceProvider.GetService<IProbeService>();
+            if (probeService == null
+                || !await probeService.ProbeDirectAsync(item, config.ProbeTimeoutSeconds, cancellationToken).ConfigureAwait(false)
+                || !item.GetMediaStreams().Any(s => s.Type == MediaStreamType.Video))
+            {
+                // No proof the file was read; keep the flag and let Jellyfin probe as usual.
+                return false;
+            }
+
+            StreamCache()?.MarkVerified(item);
+            return true;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Verification of restored streams failed for {ItemId}", item.Id);
+            return false;
+        }
     }
 
     private IStreamCache? StreamCache()
