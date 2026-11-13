@@ -39,6 +39,24 @@ A scheduled task (Dashboard > Scheduled Tasks > **Probe STRM Media Info**) that:
 - Has **no schedule by default**: add a trigger, and a maximum run time, yourself
 - Reports progress and is cancellable from the Dashboard
 
+### Probe Order
+With *Prioritize order* on (default), each run probes the items most likely to be watched first:
+1. items matching a preferred original language, production country, tag or title prefix;
+2. all other items;
+3. items rated below the minimum rating, if one is set.
+
+Inside a group the score is `rating weight × rating + recency weight × recency` (an unknown
+rating counts as 5; recency runs from 1 for this year to 0 for ten years or older, with a bonus
+for items added in the last 30 days). Items within one *randomness band* are probed in random
+order, so runs do not walk the catalogue in a fixed sequence.
+
+### Stream Cache
+Every time a STRM item gets stream information (by this plugin or by a normal playback), a copy
+is written to the plugin's data folder, keyed by the item's path and TMDb id. When the item is
+removed and recreated, for example after the source behind the STRM files rebuilt its catalogue,
+the streams are put back from that copy without contacting the upstream server. The first start
+of a restored item probes once more, in case the file behind the title changed.
+
 ### Catch-Up Mode
 Probes new STRM items in the selected libraries shortly after they are added:
 - Subscribes to Jellyfin's `ItemAdded` event
@@ -55,6 +73,14 @@ All settings are accessible from Dashboard > Plugins > JellySTRMprobe:
 | Parallelism | 1 | 1–20 | Concurrent probe operations (each holds an upstream connection) |
 | Timeout | 60s | 10–300s | Per-item probe timeout |
 | Cooldown | 2000ms | 0–60000ms | Delay after each probe |
+| Prioritize order | On | On/Off | Preferred items first, then rating and recency, random inside bands |
+| Preferred languages | `en` | list | Original languages that go first (empty: none) |
+| Preferred countries / tags / title prefixes | empty | lists | Further ways to mark items as preferred |
+| Rating weight / Recency weight | 1 / 3 | 0–10 / 0–50 | How much rating and a recent release count |
+| Minimum rating | 0 (off) | 0–10 | Items rated below this go last |
+| Randomness band | 1 | 0–100 | Score width inside which the order is random |
+| Stream cache | On | On/Off | Keep probe results outside the database and restore them without a probe |
+| Probe again after restore | On | On/Off | One real probe on the first start of a restored item |
 | Random extra pause | 0ms | 0–300000ms | Adds random 0–N ms to each cooldown |
 | Random order | On | On/Off | Each run probes a random selection instead of A-B-C |
 | Random start delay | 0 min | 0–240 min | Scheduled run waits random 0–N minutes first |

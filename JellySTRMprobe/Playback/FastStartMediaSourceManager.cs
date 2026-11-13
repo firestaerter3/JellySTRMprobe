@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Database.Implementations.Entities;
+using JellySTRMprobe.Cache;
 using JellySTRMprobe.Service;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
@@ -30,6 +31,7 @@ public sealed class FastStartMediaSourceManager : IMediaSourceManager, IDisposab
     private readonly ILogger<FastStartMediaSourceManager> _logger;
     private readonly Func<PluginConfiguration?> _getConfiguration;
     private ILibraryManager? _libraryManager;
+    private IStreamCache? _streamCache;
     private bool _disposed;
 
     /// <summary>
@@ -61,12 +63,14 @@ public sealed class FastStartMediaSourceManager : IMediaSourceManager, IDisposab
     /// <param name="allowMediaProbe">Whether the caller allows a probe.</param>
     /// <param name="config">The plugin configuration, or <c>null</c> when it is not available.</param>
     /// <param name="isInSelectedLibraries">Returns whether the item lies in a selected library.</param>
+    /// <param name="needsVerification">Returns whether the item's streams came from the cache and still need one real probe.</param>
     /// <returns><c>true</c> when the probe can be skipped.</returns>
     public static bool ShouldSkipProbe(
         BaseItem item,
         bool allowMediaProbe,
         PluginConfiguration? config,
-        Func<BaseItem, bool> isInSelectedLibraries)
+        Func<BaseItem, bool> isInSelectedLibraries,
+        Func<BaseItem, bool>? needsVerification = null)
     {
         ArgumentNullException.ThrowIfNull(item);
         ArgumentNullException.ThrowIfNull(isInSelectedLibraries);
@@ -84,7 +88,14 @@ public sealed class FastStartMediaSourceManager : IMediaSourceManager, IDisposab
             return false;
         }
 
-        return isInSelectedLibraries(item);
+        if (!isInSelectedLibraries(item))
+        {
+            return false;
+        }
+
+        // Streams put back from the cache get one real probe first, in case the file behind the
+        // same title has changed upstream.
+        return needsVerification == null || !needsVerification(item);
     }
 
     /// <inheritdoc />
@@ -93,7 +104,7 @@ public sealed class FastStartMediaSourceManager : IMediaSourceManager, IDisposab
         var skip = false;
         try
         {
-            skip = ShouldSkipProbe(item, allowMediaProbe, _getConfiguration(), IsInSelectedLibraries);
+            skip = ShouldSkipProbe(item, allowMediaProbe, _getConfiguration(), IsInSelectedLibraries, NeedsVerification);
         }
         catch (Exception ex)
         {
@@ -107,7 +118,21 @@ public sealed class FastStartMediaSourceManager : IMediaSourceManager, IDisposab
             return await _inner.GetPlaybackMediaSources(item, user, false, enablePathSubstitution, cancellationToken).ConfigureAwait(false);
         }
 
-        return await _inner.GetPlaybackMediaSources(item!, user, allowMediaProbe, enablePathSubstitution, cancellationToken).ConfigureAwait(false);
+        var sources = await _inner.GetPlaybackMediaSources(item!, user, allowMediaProbe, enablePathSubstitution, cancellationToken).ConfigureAwait(false);
+        if (allowMediaProbe && LibraryScope.IsStrm(item))
+        {
+            // Jellyfin has just probed this STRM item for real; a restored entry is now confirmed.
+            try
+            {
+                StreamCache()?.MarkVerified(item!);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Could not mark {ItemId} as verified in the stream cache", item?.Id);
+            }
+        }
+
+        return sources;
     }
 
     /// <inheritdoc />
@@ -195,6 +220,16 @@ public sealed class FastStartMediaSourceManager : IMediaSourceManager, IDisposab
         }
 
         GC.SuppressFinalize(this);
+    }
+
+    private IStreamCache? StreamCache()
+    {
+        return _streamCache ??= _serviceProvider.GetService<IStreamCache>();
+    }
+
+    private bool NeedsVerification(BaseItem item)
+    {
+        return StreamCache()?.NeedsVerification(item) == true;
     }
 
     private bool IsInSelectedLibraries(BaseItem item)

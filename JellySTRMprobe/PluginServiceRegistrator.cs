@@ -1,5 +1,6 @@
 using System;
 using System.Linq;
+using JellySTRMprobe.Cache;
 using JellySTRMprobe.EntryPoint;
 using JellySTRMprobe.Playback;
 using JellySTRMprobe.Service;
@@ -23,6 +24,9 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
     {
         serviceCollection.AddSingleton<IProbeService, ProbeService>();
         serviceCollection.AddSingleton<IPlaybackGate, PlaybackGate>();
+        serviceCollection.AddSingleton<StreamCacheService>();
+        serviceCollection.AddSingleton<IStreamCache>(sp => sp.GetRequiredService<StreamCacheService>());
+        serviceCollection.AddHostedService(sp => sp.GetRequiredService<StreamCacheService>());
         serviceCollection.AddSingleton<IScheduledTask, ProbeStrmTask>();
         serviceCollection.AddHostedService<CatchUpEntryPoint>();
 
