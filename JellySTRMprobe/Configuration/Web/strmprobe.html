@@ -92,6 +92,38 @@
                             </div>
                         </div>
                         <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="txtProbeCooldownJitterMs">
+                                Random extra pause (0-300000 ms)
+                            </label>
+                            <input is="emby-input" type="number" id="txtProbeCooldownJitterMs"
+                                   min="0" max="300000" step="1000" />
+                            <div class="fieldDescription">
+                                Adds a random 0 to this many milliseconds to each cooldown, so probes do not reach
+                                the upstream server in a fixed rhythm. 0 keeps a fixed pause.
+                            </div>
+                        </div>
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label class="emby-checkbox-label">
+                                <input is="emby-checkbox" type="checkbox" id="chkShuffleOrder" />
+                                <span>Probe in random order</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">
+                                Each run takes a random selection of unprobed items instead of walking the
+                                library alphabetically.
+                            </div>
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="txtStartDelayMaxMinutes">
+                                Random start delay (0-240 minutes)
+                            </label>
+                            <input is="emby-input" type="number" id="txtStartDelayMaxMinutes"
+                                   min="0" max="240" step="1" />
+                            <div class="fieldDescription">
+                                A scheduled run waits a random 0 to this many minutes before the first probe.
+                                The wait counts towards the trigger's maximum run time.
+                            </div>
+                        </div>
+                        <div class="inputContainer">
                             <label class="inputLabel inputLabelUnfocused" for="txtMaxItemsPerRun">
                                 Maximum items per run
                             </label>

@@ -125,7 +125,11 @@ public class ProbeStrmTaskTests
     [Fact]
     public async Task ExecuteAsync_ProbesAtMostMaxItemsPerRun()
     {
-        TestHelpers.ResetConfiguration(c => c.MaxItemsPerRun = 2);
+        TestHelpers.ResetConfiguration(c =>
+        {
+            c.MaxItemsPerRun = 2;
+            c.ShuffleOrder = false;
+        });
 
         var items = Enumerable.Range(1, 5)
             .Select(i => TestHelpers.CreateTestItem("Movie " + i, "/m/" + i + ".strm"))
@@ -162,5 +166,118 @@ public class ProbeStrmTaskTests
         await _task.ExecuteAsync(new SynchronousProgress(_ => { }), CancellationToken.None);
 
         _mockProbeService.Verify(s => s.DeleteStrmFiles(It.IsAny<IReadOnlyList<BaseItem>>()), Times.Never);
+    }
+
+    [Fact]
+    public void SelectItems_WithoutReorder_KeepsLibraryOrder()
+    {
+        var items = Enumerable.Range(1, 5).Select(i => TestHelpers.CreateTestItem("M" + i, "/m/" + i + ".strm")).ToList<BaseItem>();
+
+        ProbeStrmTask.SelectItems(items, 3, null).Should().Equal(items.Take(3));
+    }
+
+    [Fact]
+    public void SelectItems_ReordersBeforeCutting()
+    {
+        var items = Enumerable.Range(1, 5).Select(i => TestHelpers.CreateTestItem("M" + i, "/m/" + i + ".strm")).ToList<BaseItem>();
+
+        var picked = ProbeStrmTask.SelectItems(items, 2, arr => System.Array.Reverse(arr));
+
+        picked.Should().Equal(items[4], items[3]);
+        items.Select(i => i.Name).Should().Equal("M1", "M2", "M3", "M4", "M5");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ShuffleOn_ProbesTheRequestedNumberOfDistinctItems()
+    {
+        TestHelpers.ResetConfiguration(c =>
+        {
+            c.MaxItemsPerRun = 3;
+            c.ShuffleOrder = true;
+        });
+        var items = Enumerable.Range(1, 10).Select(i => TestHelpers.CreateTestItem("M" + i, "/m/" + i + ".strm")).ToList<BaseItem>();
+        _mockProbeService.Setup(s => s.GetUnprobedItems(It.IsAny<Guid[]>())).Returns(items);
+        IReadOnlyList<BaseItem>? probed = null;
+        SetupBatch((list, _) => probed = list);
+
+        await _task.ExecuteAsync(new SynchronousProgress(_ => { }), CancellationToken.None);
+
+        probed.Should().HaveCount(3);
+        probed.Should().OnlyHaveUniqueItems();
+        probed.Should().BeSubsetOf(items);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_PassesJitter()
+    {
+        TestHelpers.ResetConfiguration(c => c.ProbeCooldownJitterMs = 40000);
+        _mockProbeService.Setup(s => s.GetUnprobedItems(It.IsAny<Guid[]>()))
+            .Returns(new List<BaseItem> { TestHelpers.CreateTestItem("M", "/m/1.strm") });
+        ProbeBatchOptions? seen = null;
+        SetupBatch((_, options) => seen = options);
+
+        await _task.ExecuteAsync(new SynchronousProgress(_ => { }), CancellationToken.None);
+
+        seen!.CooldownJitterMs.Should().Be(40000);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_StartDelay_WaitsARandomTimeWithinTheMaximum()
+    {
+        TestHelpers.ResetConfiguration(c => c.StartDelayMaxMinutes = 60);
+        _mockProbeService.Setup(s => s.GetUnprobedItems(It.IsAny<Guid[]>()))
+            .Returns(new List<BaseItem> { TestHelpers.CreateTestItem("M", "/m/1.strm") });
+        SetupBatch();
+        TimeSpan? waited = null;
+        int? drawMax = null;
+        _task.NextInt = (_, hi) =>
+        {
+            drawMax = hi;
+            return 1800;
+        };
+        _task.Delay = (d, _) =>
+        {
+            waited = d;
+            return Task.CompletedTask;
+        };
+
+        await _task.ExecuteAsync(new SynchronousProgress(_ => { }), CancellationToken.None);
+
+        drawMax.Should().Be(3601);
+        waited.Should().Be(TimeSpan.FromMinutes(30));
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_NoStartDelay_DoesNotWait()
+    {
+        TestHelpers.ResetConfiguration();
+        _mockProbeService.Setup(s => s.GetUnprobedItems(It.IsAny<Guid[]>()))
+            .Returns(new List<BaseItem> { TestHelpers.CreateTestItem("M", "/m/1.strm") });
+        SetupBatch();
+        _task.Delay = (_, _) => throw new InvalidOperationException("no wait expected");
+
+        await _task.ExecuteAsync(new SynchronousProgress(_ => { }), CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_StartDelayCancelled_ProbesNothing()
+    {
+        TestHelpers.ResetConfiguration(c => c.StartDelayMaxMinutes = 10);
+        _mockProbeService.Setup(s => s.GetUnprobedItems(It.IsAny<Guid[]>()))
+            .Returns(new List<BaseItem> { TestHelpers.CreateTestItem("M", "/m/1.strm") });
+        SetupBatch();
+        using var cts = new CancellationTokenSource();
+        _task.Delay = (_, ct) =>
+        {
+            cts.Cancel();
+            return Task.Delay(Timeout.Infinite, ct);
+        };
+
+        var act = async () => await _task.ExecuteAsync(new SynchronousProgress(_ => { }), cts.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+        _mockProbeService.Verify(
+            s => s.ProbeBatchAsync(It.IsAny<IReadOnlyList<BaseItem>>(), It.IsAny<ProbeBatchOptions>(), It.IsAny<IProgress<double>>(), It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 }

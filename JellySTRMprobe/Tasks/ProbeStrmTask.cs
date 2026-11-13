@@ -53,6 +53,16 @@ public class ProbeStrmTask : IScheduledTask, IConfigurableScheduledTask
     /// <inheritdoc />
     public bool IsLogged => true;
 
+    /// <summary>
+    /// Gets or sets the delay used for the random start delay. Replaceable in tests.
+    /// </summary>
+    internal Func<TimeSpan, CancellationToken, Task> Delay { get; set; } = Task.Delay;
+
+    /// <summary>
+    /// Gets or sets the random source, returning an integer in [min, max). Replaceable in tests.
+    /// </summary>
+    internal Func<int, int, int> NextInt { get; set; } = Random.Shared.Next;
+
     /// <inheritdoc />
     /// <remarks>
     /// No trigger by default: every probe opens a connection to the upstream server, so when and
@@ -61,6 +71,27 @@ public class ProbeStrmTask : IScheduledTask, IConfigurableScheduledTask
     public IEnumerable<TaskTriggerInfo> GetDefaultTriggers()
     {
         return Array.Empty<TaskTriggerInfo>();
+    }
+
+    private static void Shuffle(BaseItem[] items) => Random.Shared.Shuffle(items);
+
+    /// <summary>
+    /// Picks the items for one run: optionally reordered, then cut to the maximum.
+    /// </summary>
+    /// <param name="all">All unprobed items.</param>
+    /// <param name="max">The maximum per run.</param>
+    /// <param name="reorder">Reorders the list in place, or <c>null</c> to keep the library order.</param>
+    /// <returns>The items to probe in this run.</returns>
+    internal static IReadOnlyList<BaseItem> SelectItems(IReadOnlyList<BaseItem> all, int max, Action<BaseItem[]>? reorder)
+    {
+        if (reorder == null)
+        {
+            return all.Count > max ? all.Take(max).ToList() : all;
+        }
+
+        var copy = all.ToArray();
+        reorder(copy);
+        return copy.Length > max ? copy.Take(max).ToList() : copy;
     }
 
     /// <inheritdoc />
@@ -72,9 +103,7 @@ public class ProbeStrmTask : IScheduledTask, IConfigurableScheduledTask
         _logger.LogInformation("Starting STRM probe task");
 
         var allItems = _probeService.GetUnprobedItems(config.SelectedLibraryIds);
-        IReadOnlyList<BaseItem> items = allItems.Count > config.MaxItemsPerRun
-            ? allItems.Take(config.MaxItemsPerRun).ToList()
-            : allItems;
+        var items = SelectItems(allItems, config.MaxItemsPerRun, config.ShuffleOrder ? Shuffle : null);
 
         if (items.Count == 0)
         {
@@ -84,19 +113,29 @@ public class ProbeStrmTask : IScheduledTask, IConfigurableScheduledTask
         }
 
         _logger.LogInformation(
-            "Probing {Count} of {Total} unprobed items with parallelism={Parallelism}, timeout={Timeout}s, cooldown={Cooldown}ms, stop after {MaxFailures} failures in a row",
+            "Probing {Count} of {Total} unprobed items ({Order} order) with parallelism={Parallelism}, timeout={Timeout}s, cooldown={Cooldown}ms + random 0-{Jitter}ms, stop after {MaxFailures} failures in a row",
             items.Count,
             allItems.Count,
+            config.ShuffleOrder ? "random" : "library",
             config.ProbeParallelism,
             config.ProbeTimeoutSeconds,
             config.ProbeCooldownMs,
+            config.ProbeCooldownJitterMs,
             config.MaxConsecutiveFailures);
+
+        if (config.StartDelayMaxMinutes > 0)
+        {
+            var startDelay = TimeSpan.FromSeconds(NextInt(0, (config.StartDelayMaxMinutes * 60) + 1));
+            _logger.LogInformation("Waiting {Minutes:F1} minutes before the first probe (random start delay)", startDelay.TotalMinutes);
+            await Delay(startDelay, cancellationToken).ConfigureAwait(false);
+        }
 
         var options = new ProbeBatchOptions
         {
             Parallelism = config.ProbeParallelism,
             TimeoutSeconds = config.ProbeTimeoutSeconds,
             CooldownMs = config.ProbeCooldownMs,
+            CooldownJitterMs = config.ProbeCooldownJitterMs,
             MaxConsecutiveFailures = config.MaxConsecutiveFailures,
             BeforeEachAsync = config.PauseWhileStrmPlaying ? _playbackGate.WaitUntilNoStrmPlayingAsync : null,
         };

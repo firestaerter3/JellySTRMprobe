@@ -25,6 +25,11 @@ public class ProbeBatchOptions
     public int CooldownMs { get; init; }
 
     /// <summary>
+    /// Gets the largest random extra pause in milliseconds after each probe.
+    /// </summary>
+    public int CooldownJitterMs { get; init; }
+
+    /// <summary>
     /// Gets the number of consecutive failures after which the batch stops. Zero or less means never.
     /// </summary>
     public int MaxConsecutiveFailures { get; init; }
