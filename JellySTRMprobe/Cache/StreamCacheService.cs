@@ -38,6 +38,11 @@ public class StreamCacheService : IStreamCache, IHostedService, IDisposable
     // changed the item (often a parallel library scan), and file IO there would slow the scan.
     private readonly Channel<BaseItem> _queue = Channel.CreateUnbounded<BaseItem>(new UnboundedChannelOptions { SingleReader = true });
     private readonly ConcurrentDictionary<Guid, byte> _queued = new();
+
+    // Striped locks: a restore's final check and write, and a probe's registration, take the
+    // same lock for the same item. A fixed set of stripes keeps memory flat.
+    private readonly object[] _itemLocks = Enumerable.Range(0, 64).Select(_ => new object()).ToArray();
+    private readonly ConcurrentDictionary<Guid, int> _probing = new();
     private CancellationTokenSource? _stoppingCts;
     private bool _disposed;
 
@@ -83,6 +88,17 @@ public class StreamCacheService : IStreamCache, IHostedService, IDisposable
         }
 
         return _store.Get(item)?.NeedsVerification == true;
+    }
+
+    /// <inheritdoc />
+    public IDisposable BeginProbe(Guid itemId)
+    {
+        lock (LockFor(itemId))
+        {
+            _probing.AddOrUpdate(itemId, 1, (_, n) => n + 1);
+        }
+
+        return new ProbeRegistration(this, itemId);
     }
 
     /// <inheritdoc />
@@ -167,6 +183,12 @@ public class StreamCacheService : IStreamCache, IHostedService, IDisposable
                 return false;
             }
 
+            // A probe that already stored fresh streams wins; nothing is overwritten.
+            if (item.GetMediaStreams().Any(s => s.Type == MediaStreamType.Video))
+            {
+                return false;
+            }
+
             // Mark the entry before touching Jellyfin: if anything below fails half-way, the
             // item gets an extra real probe instead of being trusted without one.
             if (Plugin.Instance.Configuration.VerifyAfterRestore && !entry.NeedsVerification)
@@ -175,14 +197,19 @@ public class StreamCacheService : IStreamCache, IHostedService, IDisposable
                 _store.Put(item, entry);
             }
 
-            // Read the item's streams as late as possible: a probe that stored fresh streams in
-            // the meantime wins, and nothing is overwritten.
-            if (item.GetMediaStreams().Any(s => s.Type == MediaStreamType.Video))
+            // The last check and the write happen under the item's lock, which a starting probe
+            // also takes: either the probe is registered and the restore stands down, or the
+            // write finishes before the probe starts and the probe's result lands on top.
+            lock (LockFor(item.Id))
             {
-                return false;
+                if (_probing.ContainsKey(item.Id) || item.GetMediaStreams().Any(s => s.Type == MediaStreamType.Video))
+                {
+                    return false;
+                }
+
+                _mediaStreamRepository.SaveMediaStreams(item.Id, entry.Streams, cancellationToken);
             }
 
-            _mediaStreamRepository.SaveMediaStreams(item.Id, entry.Streams, cancellationToken);
             item.RunTimeTicks = entry.RunTimeTicks;
             item.Container = entry.Container;
             item.TotalBitrate = entry.TotalBitrate;
@@ -246,6 +273,26 @@ public class StreamCacheService : IStreamCache, IHostedService, IDisposable
             _libraryManager.ItemUpdated -= OnItemChanged;
             _stoppingCts?.Cancel();
             _stoppingCts?.Dispose();
+        }
+    }
+
+    private object LockFor(Guid itemId) => _itemLocks[(itemId.GetHashCode() & int.MaxValue) % _itemLocks.Length];
+
+    private void EndProbe(Guid itemId)
+    {
+        lock (LockFor(itemId))
+        {
+            if (_probing.TryGetValue(itemId, out var n))
+            {
+                if (n <= 1)
+                {
+                    _probing.TryRemove(itemId, out _);
+                }
+                else
+                {
+                    _probing[itemId] = n - 1;
+                }
+            }
         }
     }
 
@@ -373,4 +420,26 @@ public class StreamCacheService : IStreamCache, IHostedService, IDisposable
             _logger.LogWarning(ex, "Stream cache: start-up pass failed");
         }
     }
+
+    private sealed class ProbeRegistration : IDisposable
+    {
+        private readonly StreamCacheService _owner;
+        private readonly Guid _itemId;
+        private int _disposed;
+
+        public ProbeRegistration(StreamCacheService owner, Guid itemId)
+        {
+            _owner = owner;
+            _itemId = itemId;
+        }
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) == 0)
+            {
+                _owner.EndProbe(_itemId);
+            }
+        }
+    }
 }
+

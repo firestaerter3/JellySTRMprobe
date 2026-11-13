@@ -119,16 +119,20 @@ public sealed class FastStartMediaSourceManager : IMediaSourceManager, IDisposab
             _logger.LogWarning(ex, "Fast start check failed for {ItemId}; using Jellyfin's normal probe", item?.Id);
         }
 
-        if (verify && await TryVerifyAsync(item!, config!, cancellationToken).ConfigureAwait(false))
-        {
-            // The probe just ran for real; no need for Jellyfin's refresh on top of it.
-            skip = true;
-        }
-
         if (skip)
         {
             _logger.LogDebug("Fast start: skipping probe and refresh for {ItemName} ({ItemId})", item!.Name, item.Id);
             return await _inner.GetPlaybackMediaSources(item, user, false, enablePathSubstitution, cancellationToken).ConfigureAwait(false);
+        }
+
+        // A real probe is about to run (the verification probe, or Jellyfin's own): register it so
+        // a cache restore cannot overwrite its result.
+        using var registration = allowMediaProbe && LibraryScope.IsStrm(item) ? StreamCache()?.BeginProbe(item!.Id) : null;
+
+        if (verify && await TryVerifyAsync(item!, config!, cancellationToken).ConfigureAwait(false))
+        {
+            // The probe just ran for real; no need for Jellyfin's refresh on top of it.
+            return await _inner.GetPlaybackMediaSources(item!, user, false, enablePathSubstitution, cancellationToken).ConfigureAwait(false);
         }
 
         return await _inner.GetPlaybackMediaSources(item!, user, allowMediaProbe, enablePathSubstitution, cancellationToken).ConfigureAwait(false);

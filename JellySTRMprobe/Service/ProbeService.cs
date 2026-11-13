@@ -201,7 +201,11 @@ public class ProbeService : IProbeService
                         await options.BeforeEachAsync(ct).ConfigureAwait(false);
                     }
 
-                    var success = await ProbeItemCoreAsync(item, options.TimeoutSeconds, directoryService, ct).ConfigureAwait(false);
+                    bool success;
+                    using (options.ProbeScope?.Invoke(item))
+                    {
+                        success = await ProbeItemCoreAsync(item, options.TimeoutSeconds, directoryService, ct).ConfigureAwait(false);
+                    }
 
                     // Count and check under one lock, so "in a row" follows the order in which
                     // probes finish, also when several run at the same time.
