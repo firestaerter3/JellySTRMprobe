@@ -47,6 +47,31 @@ public class PluginConfiguration : BasePluginConfiguration
     public int ProbeCooldownMs { get; set; } = 2000;
 
     /// <summary>
+    /// Gets or sets the largest random extra pause in milliseconds after each probe, on top of
+    /// <see cref="ProbeCooldownMs"/>. The pause is <c>cooldown + random(0..jitter)</c>, so the
+    /// probes do not arrive at the upstream server in a fixed rhythm. 0 means a fixed pause.
+    /// </summary>
+    public int ProbeCooldownJitterMs { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether the scheduled task picks a random selection of
+    /// unprobed items each run instead of the library's own order.
+    /// </summary>
+    /// <remarks>
+    /// On by default: the library order is roughly alphabetical, which makes a run a recognisable
+    /// A-B-C walk through the catalogue. Shuffling costs nothing, since every item gets its turn
+    /// over the runs anyway.
+    /// </remarks>
+    public bool ShuffleOrder { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets the largest random delay in minutes before a scheduled run starts probing,
+    /// so runs do not start at the same minute every night. The delay counts towards the
+    /// trigger's maximum run time. 0 means no delay.
+    /// </summary>
+    public int StartDelayMaxMinutes { get; set; }
+
+    /// <summary>
     /// Gets or sets the maximum number of items probed in one run of the task or one catch-up batch.
     /// The remaining items are left for the next run.
     /// </summary>
@@ -94,6 +119,8 @@ public class PluginConfiguration : BasePluginConfiguration
         ProbeParallelism = Math.Clamp(ProbeParallelism, 1, 20);
         ProbeTimeoutSeconds = Math.Clamp(ProbeTimeoutSeconds, 10, 300);
         ProbeCooldownMs = Math.Clamp(ProbeCooldownMs, 0, 60000);
+        ProbeCooldownJitterMs = Math.Clamp(ProbeCooldownJitterMs, 0, 300000);
+        StartDelayMaxMinutes = Math.Clamp(StartDelayMaxMinutes, 0, 240);
         MaxItemsPerRun = Math.Clamp(MaxItemsPerRun, 1, 1000000);
         MaxConsecutiveFailures = Math.Clamp(MaxConsecutiveFailures, 1, 10000);
         DeleteFailureThreshold = Math.Clamp(DeleteFailureThreshold, 1, 100);

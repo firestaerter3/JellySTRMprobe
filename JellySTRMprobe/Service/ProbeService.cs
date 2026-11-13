@@ -211,9 +211,10 @@ public class ProbeService : IProbeService
                     var current = Interlocked.Increment(ref processed);
                     progress.Report((double)current / items.Count * 100);
 
-                    if (options.CooldownMs > 0)
+                    var pause = PauseAfterProbe(options.CooldownMs, options.CooldownJitterMs, Random.Shared.Next);
+                    if (pause > 0)
                     {
-                        await Task.Delay(options.CooldownMs, ct).ConfigureAwait(false);
+                        await Task.Delay(pause, ct).ConfigureAwait(false);
                     }
                 }).ConfigureAwait(false);
         }
@@ -246,6 +247,24 @@ public class ProbeService : IProbeService
             FailedItems = failedItems.ToArray(),
             StoppedOnFailures = stopped,
         };
+    }
+
+    /// <summary>
+    /// Returns the pause after a probe: the cooldown plus a random part between 0 and the jitter.
+    /// </summary>
+    /// <param name="cooldownMs">The fixed cooldown in milliseconds.</param>
+    /// <param name="jitterMs">The largest random extra in milliseconds.</param>
+    /// <param name="next">Returns a random integer in [min, max).</param>
+    /// <returns>The pause in milliseconds, never negative.</returns>
+    internal static int PauseAfterProbe(int cooldownMs, int jitterMs, Func<int, int, int> next)
+    {
+        var fixedPart = Math.Max(0, cooldownMs);
+        if (jitterMs <= 0)
+        {
+            return fixedPart;
+        }
+
+        return fixedPart + next(0, jitterMs + 1);
     }
 
     /// <inheritdoc />

@@ -739,5 +739,32 @@ public class ProbeServiceTests
             p => p.RefreshSingleItem(It.IsAny<BaseItem>(), It.IsAny<MetadataRefreshOptions>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
-}
 
+    [Fact]
+    public void PauseAfterProbe_WithoutJitter_IsTheCooldown()
+    {
+        ProbeService.PauseAfterProbe(2000, 0, (_, _) => throw new InvalidOperationException("no random draw expected"))
+            .Should().Be(2000);
+    }
+
+    [Fact]
+    public void PauseAfterProbe_WithJitter_AddsADrawUpToAndIncludingTheJitter()
+    {
+        int? max = null;
+        var pause = ProbeService.PauseAfterProbe(20000, 40000, (lo, hi) =>
+        {
+            lo.Should().Be(0);
+            max = hi;
+            return 12345;
+        });
+
+        pause.Should().Be(32345);
+        max.Should().Be(40001);
+    }
+
+    [Fact]
+    public void PauseAfterProbe_NegativeCooldown_CountsAsZero()
+    {
+        ProbeService.PauseAfterProbe(-5, 0, (_, _) => 0).Should().Be(0);
+    }
+}
