@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.IO;
 using System.Linq;
 using System.Threading;
+using System.Threading.Channels;
 using System.Threading.Tasks;
 using JellySTRMprobe.Service;
 using MediaBrowser.Controller.Entities;
@@ -32,6 +33,11 @@ public class StreamCacheService : IStreamCache, IHostedService, IDisposable
     private readonly ILogger<StreamCacheService> _logger;
     private readonly ConcurrentDictionary<Guid, byte> _restoring = new();
     private readonly StreamCacheStore _store;
+
+    // Library events are handled on a background worker: the event comes in on the thread that
+    // changed the item (often a parallel library scan), and file IO there would slow the scan.
+    private readonly Channel<BaseItem> _queue = Channel.CreateUnbounded<BaseItem>(new UnboundedChannelOptions { SingleReader = true });
+    private readonly ConcurrentDictionary<Guid, byte> _queued = new();
     private CancellationTokenSource? _stoppingCts;
     private bool _disposed;
 
@@ -112,11 +118,9 @@ public class StreamCacheService : IStreamCache, IHostedService, IDisposable
             return false;
         }
 
+        var fingerprint = StreamCacheStore.Fingerprint(streams, item.RunTimeTicks, item.Container, item.TotalBitrate, item.Width, item.Height);
         var existing = _store.Get(item);
-        if (existing != null
-            && existing.Streams.Count == streams.Count
-            && existing.RunTimeTicks == item.RunTimeTicks
-            && string.Equals(existing.Container, item.Container, StringComparison.Ordinal))
+        if (existing != null && string.Equals(existing.Fingerprint, fingerprint, StringComparison.Ordinal))
         {
             return false;
         }
@@ -127,6 +131,7 @@ public class StreamCacheService : IStreamCache, IHostedService, IDisposable
             Path = item.Path,
             TmdbId = tmdb,
             SavedUtc = DateTime.UtcNow,
+            Fingerprint = fingerprint,
             RunTimeTicks = item.RunTimeTicks,
             Container = item.Container,
             TotalBitrate = item.TotalBitrate,
@@ -147,17 +152,8 @@ public class StreamCacheService : IStreamCache, IHostedService, IDisposable
             return false;
         }
 
-        if (item.GetMediaStreams().Any(s => s.Type == MediaStreamType.Video))
-        {
-            return false;
-        }
-
-        var entry = _store.Get(item);
-        if (entry == null || !entry.Streams.Any(s => s.Type == MediaStreamType.Video))
-        {
-            return false;
-        }
-
+        // Take the guard first, so the checks below and the write cannot interleave with a
+        // second restore of the same item.
         if (!_restoring.TryAdd(item.Id, 0))
         {
             return false;
@@ -165,17 +161,35 @@ public class StreamCacheService : IStreamCache, IHostedService, IDisposable
 
         try
         {
+            var entry = _store.Get(item);
+            if (entry == null || !entry.Streams.Any(s => s.Type == MediaStreamType.Video))
+            {
+                return false;
+            }
+
+            // Mark the entry before touching Jellyfin: if anything below fails half-way, the
+            // item gets an extra real probe instead of being trusted without one.
+            if (Plugin.Instance.Configuration.VerifyAfterRestore && !entry.NeedsVerification)
+            {
+                entry.NeedsVerification = true;
+                _store.Put(item, entry);
+            }
+
+            // Read the item's streams as late as possible: a probe that stored fresh streams in
+            // the meantime wins, and nothing is overwritten.
+            if (item.GetMediaStreams().Any(s => s.Type == MediaStreamType.Video))
+            {
+                return false;
+            }
+
             _mediaStreamRepository.SaveMediaStreams(item.Id, entry.Streams, cancellationToken);
             item.RunTimeTicks = entry.RunTimeTicks;
             item.Container = entry.Container;
             item.TotalBitrate = entry.TotalBitrate;
             item.Width = entry.Width;
             item.Height = entry.Height;
-
             await item.UpdateToRepositoryAsync(ItemUpdateType.MetadataImport, cancellationToken).ConfigureAwait(false);
 
-            entry.NeedsVerification = Plugin.Instance.Configuration.VerifyAfterRestore;
-            _store.Put(item, entry);
             _logger.LogInformation("Stream cache: restored {Count} streams for {ItemName} without a probe", entry.Streams.Count, item.Name);
             return true;
         }
@@ -191,6 +205,7 @@ public class StreamCacheService : IStreamCache, IHostedService, IDisposable
         _stoppingCts = new CancellationTokenSource();
         _libraryManager.ItemAdded += OnItemChanged;
         _libraryManager.ItemUpdated += OnItemChanged;
+        _ = ProcessQueueAsync(_stoppingCts.Token);
         _ = SeedAsync(_stoppingCts.Token);
         return Task.CompletedTask;
     }
@@ -252,25 +267,60 @@ public class StreamCacheService : IStreamCache, IHostedService, IDisposable
             && LibraryScope.IsInSelectedLibraries(_libraryManager, item, Plugin.Instance.Configuration.SelectedLibraryIds);
     }
 
-    // Event handlers must be void; nothing may escape them.
-    private async void OnItemChanged(object? sender, ItemChangeEventArgs e)
+    private void OnItemChanged(object? sender, ItemChangeEventArgs e)
     {
         try
         {
             var item = e.Item;
-            if (!IsEnabled() || item == null || _restoring.ContainsKey(item.Id) || !InScope(item))
+            if (item == null || !IsEnabled() || _restoring.ContainsKey(item.Id) || !LibraryScope.IsStrm(item))
             {
                 return;
             }
 
-            if (!Save(item))
+            // One pending entry per item; the worker reads the item's state when it gets to it.
+            if (_queued.TryAdd(item.Id, 0))
             {
-                await TryRestoreAsync(item, _stoppingCts?.Token ?? CancellationToken.None).ConfigureAwait(false);
+                _queue.Writer.TryWrite(item);
             }
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Stream cache: handling a library change failed");
+            _logger.LogWarning(ex, "Stream cache: queueing a library change failed");
+        }
+    }
+
+    private async Task ProcessQueueAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await foreach (var item in _queue.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
+            {
+                _queued.TryRemove(item.Id, out _);
+                try
+                {
+                    if (_restoring.ContainsKey(item.Id) || !InScope(item))
+                    {
+                        continue;
+                    }
+
+                    if (!Save(item))
+                    {
+                        await TryRestoreAsync(item, cancellationToken).ConfigureAwait(false);
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Stream cache: handling a change of {ItemId} failed", item.Id);
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Server stopping.
         }
     }
 

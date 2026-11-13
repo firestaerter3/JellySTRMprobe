@@ -25,6 +25,11 @@ public class StreamCacheEntry
     public DateTime SavedUtc { get; set; }
 
     /// <summary>
+    /// Gets or sets the fingerprint of the stored values (see <see cref="StreamCacheStore.Fingerprint"/>).
+    /// </summary>
+    public string? Fingerprint { get; set; }
+
+    /// <summary>
     /// Gets or sets the run time in ticks.
     /// </summary>
     public long? RunTimeTicks { get; set; }

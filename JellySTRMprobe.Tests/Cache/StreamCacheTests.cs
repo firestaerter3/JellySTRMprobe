@@ -169,4 +169,26 @@ public sealed class StreamCacheTests : IDisposable
 
         (await _cache.TryRestoreAsync(TestHelpers.CreateMockItem("J", "/lib/j.strm", new List<MediaStream>()).Object, CancellationToken.None)).Should().BeFalse();
     }
+
+    [Fact]
+    public void Save_ChangedCodecWithSameCount_IsWritten()
+    {
+        var item = TestHelpers.CreateMockItem("K", "/lib/k.strm", Streams()).Object;
+        _cache.Save(item).Should().BeTrue();
+
+        var changed = Streams();
+        changed[0].Codec = "h264";
+        var reprobed = TestHelpers.CreateMockItem("K", "/lib/k.strm", changed).Object;
+
+        _cache.Save(reprobed).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task PathsDifferingOnlyInCase_AreDifferentEntries()
+    {
+        _cache.Save(TestHelpers.CreateMockItem("L", "/lib/Foo/l.strm", Streams()).Object);
+
+        (await _cache.TryRestoreAsync(TestHelpers.CreateMockItem("L", "/lib/foo/l.strm", new List<MediaStream>()).Object, CancellationToken.None)).Should().BeFalse();
+    }
 }
+

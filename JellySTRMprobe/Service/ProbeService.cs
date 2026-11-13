@@ -111,6 +111,36 @@ public class ProbeService : IProbeService
     }
 
     /// <inheritdoc />
+    public async Task<bool> ProbeDirectAsync(BaseItem item, int timeoutSeconds, CancellationToken cancellationToken)
+    {
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutCts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
+        try
+        {
+            var options = new MetadataRefreshOptions(new DirectoryService(_fileSystem))
+            {
+                EnableRemoteContentProbe = true,
+                MetadataRefreshMode = MetadataRefreshMode.FullRefresh,
+            };
+            return await TryDirectProbeAsync(item, options, timeoutCts.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogWarning("Verification probe timed out for {ItemName} ({ItemId})", item.Name, item.Id);
+            return false;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Verification probe failed for {ItemName} ({ItemId})", item.Name, item.Id);
+            return false;
+        }
+    }
+
+    /// <inheritdoc />
     public Task<ProbeResult> ProbeBatchAsync(
         IReadOnlyList<BaseItem> items,
         int parallelism,

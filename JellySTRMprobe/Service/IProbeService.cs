@@ -28,6 +28,17 @@ public interface IProbeService
     Task<bool> ProbeItemAsync(BaseItem item, int timeoutSeconds, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Runs only Jellyfin's probe provider on the item, and reports whether that probe itself
+    /// succeeded. Unlike <see cref="ProbeItemAsync"/> it never falls back to a full refresh, so
+    /// <c>true</c> means ffprobe really read the upstream file.
+    /// </summary>
+    /// <param name="item">The item to probe.</param>
+    /// <param name="timeoutSeconds">Timeout in seconds.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns><c>true</c> when the probe provider ran without error.</returns>
+    Task<bool> ProbeDirectAsync(BaseItem item, int timeoutSeconds, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Probes a batch of items in parallel with configurable concurrency, timeout, and cooldown.
     /// </summary>
     /// <param name="items">The items to probe.</param>
