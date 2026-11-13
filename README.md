@@ -55,6 +55,9 @@ All settings are accessible from Dashboard > Plugins > JellySTRMprobe:
 | Parallelism | 1 | 1–20 | Concurrent probe operations (each holds an upstream connection) |
 | Timeout | 60s | 10–300s | Per-item probe timeout |
 | Cooldown | 2000ms | 0–60000ms | Delay after each probe |
+| Random extra pause | 0ms | 0–300000ms | Adds random 0–N ms to each cooldown |
+| Random order | On | On/Off | Each run probes a random selection instead of A-B-C |
+| Random start delay | 0 min | 0–240 min | Scheduled run waits random 0–N minutes first |
 | Maximum items per run | 500 | 1–1000000 | Cap per task run or catch-up batch |
 | Stop after failures in a row | 10 | 1–10000 | Stops a run when the upstream server seems down |
 | Wait while a STRM item plays | On | On/Off | Pause probing during STRM playback |

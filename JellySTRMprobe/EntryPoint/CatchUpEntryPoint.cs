@@ -211,6 +211,7 @@ public class CatchUpEntryPoint : IHostedService, IDisposable
             Parallelism = config.ProbeParallelism,
             TimeoutSeconds = config.ProbeTimeoutSeconds,
             CooldownMs = config.ProbeCooldownMs,
+            CooldownJitterMs = config.ProbeCooldownJitterMs,
             MaxConsecutiveFailures = config.MaxConsecutiveFailures,
             BeforeEachAsync = config.PauseWhileStrmPlaying ? _playbackGate.WaitUntilNoStrmPlayingAsync : null,
         };
