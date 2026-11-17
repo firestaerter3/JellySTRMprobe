@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -9,13 +10,14 @@ using JellySTRMprobe.Service;
 using JellySTRMprobe.Tasks;
 using MediaBrowser.Controller.Entities;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using Xunit;
 
 namespace JellySTRMprobe.Tests.Tasks;
 
 [Collection("PluginInstance")]
-public class ProbeStrmTaskTests
+public sealed class ProbeStrmTaskTests : IDisposable
 {
     private readonly Mock<IProbeService> _mockProbeService;
     private readonly Mock<IPlaybackGate> _mockPlaybackGate;
@@ -34,6 +36,96 @@ public class ProbeStrmTaskTests
         TestHelpers.ResetConfiguration();
 
         _task = new ProbeStrmTask(_mockProbeService.Object, _mockPlaybackGate.Object, _mockStreamCache.Object, _mockLogger.Object);
+        _failedFile = Path.Combine(Path.GetTempPath(), "strmprobe-failed-" + Guid.NewGuid().ToString("N") + ".json");
+        _now = new DateTime(2026, 11, 17, 3, 0, 0, DateTimeKind.Utc);
+        _task.FailedStore = new FailedProbeStore(() => _failedFile, () => _now, NullLogger.Instance);
+    }
+
+    private readonly string _failedFile;
+    private DateTime _now;
+
+    public void Dispose()
+    {
+        if (File.Exists(_failedFile))
+        {
+            File.Delete(_failedFile);
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_RecordsFailedItems_AndSkipsThemOnTheNextRun()
+    {
+        var bad = TestHelpers.CreateTestItem("Bad", "/m/bad.strm");
+        var good = TestHelpers.CreateTestItem("Good", "/m/good.strm");
+        _mockProbeService.Setup(s => s.GetUnprobedItems(It.IsAny<Guid[]>())).Returns(new List<BaseItem> { bad, good });
+
+        IReadOnlyList<BaseItem>? firstRun = null;
+        SetupBatch((items, _) => firstRun = items, new ProbeResult { Probed = 1, Failed = 1, FailedItems = new[] { bad } });
+        await _task.ExecuteAsync(new SynchronousProgress(_ => { }), CancellationToken.None);
+        firstRun.Should().HaveCount(2);
+
+        // Three days later the failed item is still skipped.
+        _now = _now.AddDays(3);
+        IReadOnlyList<BaseItem>? secondRun = null;
+        SetupBatch((items, _) => secondRun = items);
+        await _task.ExecuteAsync(new SynchronousProgress(_ => { }), CancellationToken.None);
+        secondRun.Should().ContainSingle().Which.Should().BeSameAs(good);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ProbesAFailedItemAgain_AfterTheSkipPeriod()
+    {
+        var bad = TestHelpers.CreateTestItem("Bad", "/m/bad.strm");
+        _mockProbeService.Setup(s => s.GetUnprobedItems(It.IsAny<Guid[]>())).Returns(new List<BaseItem> { bad });
+        SetupBatch(null, new ProbeResult { Failed = 1, FailedItems = new[] { bad } });
+        await _task.ExecuteAsync(new SynchronousProgress(_ => { }), CancellationToken.None);
+
+        _now = _now.AddDays(8);
+        IReadOnlyList<BaseItem>? later = null;
+        SetupBatch((items, _) => later = items);
+        await _task.ExecuteAsync(new SynchronousProgress(_ => { }), CancellationToken.None);
+
+        later.Should().ContainSingle().Which.Should().BeSameAs(bad);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_SkipDaysZero_RecordsAndSkipsNothing()
+    {
+        TestHelpers.ResetConfiguration(c => c.FailedProbeSkipDays = 0);
+        var bad = TestHelpers.CreateTestItem("Bad", "/m/bad.strm");
+        _mockProbeService.Setup(s => s.GetUnprobedItems(It.IsAny<Guid[]>())).Returns(new List<BaseItem> { bad });
+        SetupBatch(null, new ProbeResult { Failed = 1, FailedItems = new[] { bad } });
+        await _task.ExecuteAsync(new SynchronousProgress(_ => { }), CancellationToken.None);
+
+        IReadOnlyList<BaseItem>? again = null;
+        SetupBatch((items, _) => again = items);
+        await _task.ExecuteAsync(new SynchronousProgress(_ => { }), CancellationToken.None);
+
+        File.Exists(_failedFile).Should().BeFalse();
+        again.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_RunStoppedOnFailures_RecordsNothing()
+    {
+        var bad = TestHelpers.CreateTestItem("Bad", "/m/bad.strm");
+        _mockProbeService.Setup(s => s.GetUnprobedItems(It.IsAny<Guid[]>())).Returns(new List<BaseItem> { bad });
+        SetupBatch(null, new ProbeResult { Failed = 1, FailedItems = new[] { bad }, StoppedOnFailures = true });
+        await _task.ExecuteAsync(new SynchronousProgress(_ => { }), CancellationToken.None);
+
+        File.Exists(_failedFile).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_RunStoppedAfterManySuccesses_RecordsFailures()
+    {
+        TestHelpers.ResetConfiguration(c => c.MaxConsecutiveFailures = 10);
+        var bad = TestHelpers.CreateTestItem("Bad", "/m/bad.strm");
+        _mockProbeService.Setup(s => s.GetUnprobedItems(It.IsAny<Guid[]>())).Returns(new List<BaseItem> { bad });
+        SetupBatch(null, new ProbeResult { Probed = 392, Failed = 1, FailedItems = new[] { bad }, StoppedOnFailures = true });
+        await _task.ExecuteAsync(new SynchronousProgress(_ => { }), CancellationToken.None);
+
+        File.Exists(_failedFile).Should().BeTrue();
     }
 
     private void SetupBatch(Action<IReadOnlyList<BaseItem>, ProbeBatchOptions>? capture = null, ProbeResult? result = null)

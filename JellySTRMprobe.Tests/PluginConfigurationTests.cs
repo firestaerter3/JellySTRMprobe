@@ -89,4 +89,24 @@ public class PluginConfigurationTests
         config.MaxConsecutiveFailures.Should().Be(1);
         config.ProbeCooldownMs.Should().Be(60000);
     }
+
+    [Fact]
+    public void FailedProbeSkipDays_DefaultsToSeven()
+    {
+        new PluginConfiguration().FailedProbeSkipDays.Should().Be(7);
+    }
+
+    [Theory]
+    [InlineData(-3, 0)]
+    [InlineData(0, 0)]
+    [InlineData(30, 30)]
+    [InlineData(4000, 365)]
+    public void Validate_ClampsFailedProbeSkipDays(int value, int expected)
+    {
+        var config = new PluginConfiguration { FailedProbeSkipDays = value };
+
+        config.Validate();
+
+        config.FailedProbeSkipDays.Should().Be(expected);
+    }
 }

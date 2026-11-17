@@ -8,7 +8,7 @@ using Microsoft.Extensions.Logging;
 namespace JellySTRMprobe.Service;
 
 /// <summary>
-/// Uses the session manager to find out whether someone is playing a STRM item.
+/// Uses the session manager to find out whether anyone is playing anything.
 /// </summary>
 public class PlaybackGate : IPlaybackGate
 {
@@ -31,11 +31,10 @@ public class PlaybackGate : IPlaybackGate
     /// <inheritdoc />
     public bool IsStrmPlaying()
     {
-        // A session whose item is unknown counts as playing a STRM item: waiting is cheap,
-        // a probe next to a viewer on a single-connection provider breaks one of the two.
-        return _sessionManager.Sessions.Any(session =>
-            session.NowPlayingItem != null
-            && (session.FullNowPlayingItem == null || LibraryScope.IsStrm(session.FullNowPlayingItem)));
+        // Any playback counts, live TV included: a channel stream uses the same upstream
+        // connection allowance as a film, and on a single-connection provider a probe next to
+        // a viewer breaks one of the two. Waiting is cheap.
+        return _sessionManager.Sessions.Any(session => session.NowPlayingItem != null);
     }
 
     /// <inheritdoc />

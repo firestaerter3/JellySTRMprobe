@@ -1,6 +1,6 @@
 name: "JellySTRMprobe"
 guid: "b8f5e3a1-d4c7-4f2e-9a6b-1c8d3e5f7a9b"
-version: "2.0.2.0"
+version: "2.0.3.0"
 targetAbi: "12.0.0.0"
 framework: "net10.0"
 owner: "firestaerter3"
@@ -26,6 +26,12 @@ category: "General"
 artifacts:
   - "JellySTRMprobe.dll"
 changelog: |
+  ## v2.0.3.0
+  - A scheduled run skips an item for 7 days after its probe failed (FailedProbeSkipDays, 0 turns
+    it off). The list is kept in failed-probes.json in the plugin data folder. A run that stops on
+    consecutive failures records nothing, unless it had at least as many successful probes as the
+    stop limit; then the server was up and the failures are items that are gone.
+  - Probing now waits while anyone is playing anything, live TV included, not only a STRM item.
   ## v2.0.2.0
   - Priority order: preferred items first (by original language, production country, tag or
     title prefix), then by rating and release year, random inside score bands. All of it is

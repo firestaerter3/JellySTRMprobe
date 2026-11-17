@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -35,6 +36,10 @@ public class ProbeStrmTask : IScheduledTask, IConfigurableScheduledTask
         _playbackGate = playbackGate;
         _streamCache = streamCache;
         _logger = logger;
+        FailedStore = new FailedProbeStore(
+            () => Path.Combine(Plugin.Instance.DataFolderPath, "failed-probes.json"),
+            () => DateTime.UtcNow,
+            logger);
     }
 
     /// <inheritdoc />
@@ -57,6 +62,11 @@ public class ProbeStrmTask : IScheduledTask, IConfigurableScheduledTask
 
     /// <inheritdoc />
     public bool IsLogged => true;
+
+    /// <summary>
+    /// Gets or sets the list of items whose probe failed recently. Replaceable in tests.
+    /// </summary>
+    internal FailedProbeStore FailedStore { get; set; }
 
     /// <summary>
     /// Gets or sets the delay used for the random start delay. Replaceable in tests.
@@ -129,6 +139,16 @@ public class ProbeStrmTask : IScheduledTask, IConfigurableScheduledTask
             _logger.LogInformation("Restored {Count} items from the stream cache without probing", restored);
         }
 
+        var skipped = FailedStore.RecentlyFailed(allItems, config.FailedProbeSkipDays);
+        if (skipped.Count > 0)
+        {
+            allItems.RemoveAll(item => skipped.Contains(item.Id));
+            _logger.LogInformation(
+                "Skipping {Count} items whose probe failed in the last {Days} days",
+                skipped.Count,
+                config.FailedProbeSkipDays);
+        }
+
         var items = config.PrioritizeOrder
             ? SelectItems(PriorityOrder.Sort(allItems, config, DateTime.UtcNow, Random.Shared), config.MaxItemsPerRun, null)
             : SelectItems(allItems, config.MaxItemsPerRun, config.ShuffleOrder ? Shuffle : null);
@@ -170,6 +190,16 @@ public class ProbeStrmTask : IScheduledTask, IConfigurableScheduledTask
         };
 
         var result = await _probeService.ProbeBatchAsync(items, options, progress, cancellationToken).ConfigureAwait(false);
+
+        // A run that stopped on consecutive failures records nothing when it had no successes to
+        // show the server was up. A run with at least as many successes as the stop limit shows the
+        // server answered, so its failures are items that are gone (for example removed upstream),
+        // and they are recorded; otherwise the same ones would stop every night's run again.
+        var serverAnswered = !result.StoppedOnFailures || result.Probed >= config.MaxConsecutiveFailures;
+        if (config.FailedProbeSkipDays > 0 && serverAnswered && result.FailedItems.Count > 0)
+        {
+            FailedStore.Record(result.FailedItems, config.FailedProbeSkipDays);
+        }
 
         if (result.StoppedOnFailures && config.DeleteFailedStrms)
         {
