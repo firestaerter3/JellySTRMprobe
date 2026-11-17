@@ -29,7 +29,8 @@ changelog: |
   ## v2.0.3.0
   - A scheduled run skips an item for 7 days after its probe failed (FailedProbeSkipDays, 0 turns
     it off). The list is kept in failed-probes.json in the plugin data folder. A run that stops on
-    consecutive failures records nothing.
+    consecutive failures records nothing, unless it had at least as many successful probes as the
+    stop limit; then the server was up and the failures are items that are gone.
   - Probing now waits while anyone is playing anything, live TV included, not only a STRM item.
   ## v2.0.2.0
   - Priority order: preferred items first (by original language, production country, tag or

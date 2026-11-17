@@ -152,7 +152,8 @@ public class PluginConfiguration : BasePluginConfiguration
     /// Items that stay unprobed (a removed or broken stream) would otherwise be tried again at the
     /// top of every run, and every try is a request to the upstream server that fails again.
     /// The list is kept in <c>failed-probes.json</c> in the plugin data folder. A run that stops
-    /// on consecutive failures records nothing, because then the server was probably down.
+    /// on consecutive failures records nothing, because then the server was probably down, unless
+    /// it had at least <see cref="MaxConsecutiveFailures"/> successful probes first.
     /// </remarks>
     public int FailedProbeSkipDays { get; set; } = 7;
 

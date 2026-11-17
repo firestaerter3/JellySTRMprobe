@@ -116,6 +116,18 @@ public sealed class ProbeStrmTaskTests : IDisposable
         File.Exists(_failedFile).Should().BeFalse();
     }
 
+    [Fact]
+    public async Task ExecuteAsync_RunStoppedAfterManySuccesses_RecordsFailures()
+    {
+        TestHelpers.ResetConfiguration(c => c.MaxConsecutiveFailures = 10);
+        var bad = TestHelpers.CreateTestItem("Bad", "/m/bad.strm");
+        _mockProbeService.Setup(s => s.GetUnprobedItems(It.IsAny<Guid[]>())).Returns(new List<BaseItem> { bad });
+        SetupBatch(null, new ProbeResult { Probed = 392, Failed = 1, FailedItems = new[] { bad }, StoppedOnFailures = true });
+        await _task.ExecuteAsync(new SynchronousProgress(_ => { }), CancellationToken.None);
+
+        File.Exists(_failedFile).Should().BeTrue();
+    }
+
     private void SetupBatch(Action<IReadOnlyList<BaseItem>, ProbeBatchOptions>? capture = null, ProbeResult? result = null)
     {
         _mockProbeService

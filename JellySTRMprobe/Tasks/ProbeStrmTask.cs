@@ -191,7 +191,12 @@ public class ProbeStrmTask : IScheduledTask, IConfigurableScheduledTask
 
         var result = await _probeService.ProbeBatchAsync(items, options, progress, cancellationToken).ConfigureAwait(false);
 
-        if (config.FailedProbeSkipDays > 0 && !result.StoppedOnFailures && result.FailedItems.Count > 0)
+        // A run that stopped on consecutive failures records nothing when it had no successes to
+        // show the server was up. A run with at least as many successes as the stop limit shows the
+        // server answered, so its failures are items that are gone (for example removed upstream),
+        // and they are recorded; otherwise the same ones would stop every night's run again.
+        var serverAnswered = !result.StoppedOnFailures || result.Probed >= config.MaxConsecutiveFailures;
+        if (config.FailedProbeSkipDays > 0 && serverAnswered && result.FailedItems.Count > 0)
         {
             FailedStore.Record(result.FailedItems, config.FailedProbeSkipDays);
         }
