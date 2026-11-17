@@ -145,10 +145,21 @@
                                 and no STRM files are deleted in that run.
                             </div>
                         </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="txtFailedProbeSkipDays">
+                                Skip an item for this many days after its probe failed (0 = off)
+                            </label>
+                            <input is="emby-input" type="number" id="txtFailedProbeSkipDays"
+                                   min="0" max="365" step="1" />
+                            <div class="fieldDescription">
+                                A broken or removed stream would otherwise fail again at the top of every run.
+                                A run that stops on consecutive failures records nothing.
+                            </div>
+                        </div>
                         <div class="checkboxContainer checkboxContainer-withDescription">
                             <label class="emby-checkbox-label">
                                 <input is="emby-checkbox" type="checkbox" id="chkPauseWhileStrmPlaying" />
-                                <span>Wait while someone is playing a STRM item</span>
+                                <span>Wait while anyone is playing something (live TV included)</span>
                             </label>
                             <div class="fieldDescription checkboxFieldDescription">
                                 A probe uses a connection to the same upstream server as the viewer. With a provider

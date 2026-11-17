@@ -52,15 +52,22 @@ public class PlaybackGateTests
     }
 
     [Fact]
-    public void LocalFilePlaying_IsNotAStrm()
+    public void LocalFilePlaying_Counts()
     {
-        Gate(Session("/x/Movies/a.mkv")).IsStrmPlaying().Should().BeFalse();
+        Gate(Session("/x/Movies/a.mkv")).IsStrmPlaying().Should().BeTrue();
     }
 
     [Fact]
-    public void UnknownItemPlaying_CountsAsStrm()
+    public void LiveTvPlaying_Counts()
     {
+        // A live TV session has a playing item that is not a file; it still holds a connection.
         Gate(Session(null)).IsStrmPlaying().Should().BeTrue();
+    }
+
+    [Fact]
+    public void OnlyIdleSessions_NothingPlaying()
+    {
+        Gate(Session(null, playing: false), Session(null, playing: false)).IsStrmPlaying().Should().BeFalse();
     }
 
     [Fact]

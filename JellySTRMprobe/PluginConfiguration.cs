@@ -145,11 +145,24 @@ public class PluginConfiguration : BasePluginConfiguration
     public int MaxConsecutiveFailures { get; set; } = 10;
 
     /// <summary>
-    /// Gets or sets a value indicating whether probing waits while someone is playing a STRM item.
+    /// Gets or sets the number of days a scheduled run leaves an item alone after its probe failed.
+    /// 0 turns this off, so every run tries every failed item again.
+    /// </summary>
+    /// <remarks>
+    /// Items that stay unprobed (a removed or broken stream) would otherwise be tried again at the
+    /// top of every run, and every try is a request to the upstream server that fails again.
+    /// The list is kept in <c>failed-probes.json</c> in the plugin data folder. A run that stops
+    /// on consecutive failures records nothing, because then the server was probably down.
+    /// </remarks>
+    public int FailedProbeSkipDays { get; set; } = 7;
+
+    /// <summary>
+    /// Gets or sets a value indicating whether probing waits while anyone is playing something.
     /// </summary>
     /// <remarks>
     /// A probe opens a connection to the same upstream server as the viewer. With a provider that
-    /// allows one connection, a probe next to a viewer makes one of the two fail.
+    /// allows one connection, a probe next to a viewer makes one of the two fail. Any playback
+    /// counts, including live TV, because a channel stream uses the same connection allowance.
     /// </remarks>
     public bool PauseWhileStrmPlaying { get; set; } = true;
 
@@ -192,6 +205,7 @@ public class PluginConfiguration : BasePluginConfiguration
         PriorityTitlePrefixes ??= string.Empty;
         MaxItemsPerRun = Math.Clamp(MaxItemsPerRun, 1, 1000000);
         MaxConsecutiveFailures = Math.Clamp(MaxConsecutiveFailures, 1, 10000);
+        FailedProbeSkipDays = Math.Clamp(FailedProbeSkipDays, 0, 365);
         DeleteFailureThreshold = Math.Clamp(DeleteFailureThreshold, 1, 100);
         SelectedLibraryIds ??= Array.Empty<Guid>();
     }
